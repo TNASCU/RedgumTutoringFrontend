@@ -12,12 +12,12 @@ const SEED_DATA = {
     { id: 'S-0251', name: 'Noah Chen', year: 8, school: 'St Peter Claver College', guardian: 'Jo Chen', phone: '0415 220 971', email: 'jo.chen@example.com', subjects: ['Mathematics'], active: false }
   ],
   tutors: [
-    { id: 'T-001', name: 'Helen Vasquez', phone: '0411 800 221', subjects: ['Mathematics', 'Maths Methods'], active: true, cap: 12, windows: [['Tuesday', '15:00', '20:00'], ['Wednesday', '15:00', '20:00'], ['Thursday', '15:00', '20:00'], ['Friday', '15:00', '20:00'], ['Saturday', '08:30', '13:00']] },
-    { id: 'T-004', name: 'Tomás Ferreira', phone: '0407 512 884', subjects: ['Physics', 'Chemistry', 'Maths Methods'], active: true, cap: 8, windows: [['Tuesday', '15:30', '19:00'], ['Wednesday', '15:30', '18:00'], ['Thursday', '16:00', '18:30'], ['Saturday', '09:00', '12:30']] },
-    { id: 'T-006', name: 'Priyanka Shah', phone: '0422 410 337', subjects: ['English', 'Mathematics'], active: true, cap: 10, windows: [['Tuesday', '15:00', '19:00'], ['Thursday', '15:00', '20:00'], ['Friday', '15:00', '19:00'], ['Saturday', '08:30', '12:00']] },
-    { id: 'T-008', name: 'Liam O’Connor', phone: '0431 665 109', subjects: ['English', 'Modern History'], active: true, cap: 7, windows: [['Wednesday', '15:00', '20:00'], ['Friday', '15:30', '20:00']] },
-    { id: 'T-009', name: 'Grace Wu', phone: '0403 929 140', subjects: ['Chemistry', 'Biology'], active: true, cap: 8, windows: [['Tuesday', '16:00', '20:00'], ['Thursday', '15:00', '19:30'], ['Saturday', '09:00', '13:00']] },
-    { id: 'T-010', name: 'Daniel Brooks', phone: '0419 235 885', subjects: ['Mathematics', 'Physics'], active: false, cap: 8, windows: [] }
+    { id: 'T-001', name: 'Helen Vasquez', firstName: 'Helen', lastName: 'Vasquez', preferredName: '', phone: '0411 800 221', subjects: ['Mathematics', 'Maths Methods'], active: true, cap: 12, windows: [['Tuesday', '15:00', '20:00'], ['Wednesday', '15:00', '20:00'], ['Thursday', '15:00', '20:00'], ['Friday', '15:00', '20:00'], ['Saturday', '08:30', '13:00']] },
+    { id: 'T-004', name: 'Tomás Ferreira', firstName: 'Tomás', lastName: 'Ferreira', preferredName: '', phone: '0407 512 884', subjects: ['Physics', 'Chemistry', 'Maths Methods'], active: true, cap: 8, windows: [['Tuesday', '15:30', '19:00'], ['Wednesday', '15:30', '18:00'], ['Thursday', '16:00', '18:30'], ['Saturday', '09:00', '12:30']] },
+    { id: 'T-006', name: 'Priyanka Shah', firstName: 'Priyanka', lastName: 'Shah', preferredName: '', phone: '0422 410 337', subjects: ['English', 'Mathematics'], active: true, cap: 10, windows: [['Tuesday', '15:00', '19:00'], ['Thursday', '15:00', '20:00'], ['Friday', '15:00', '19:00'], ['Saturday', '08:30', '12:00']] },
+    { id: 'T-008', name: 'Liam O’Connor', firstName: 'Liam', lastName: 'O’Connor', preferredName: '', phone: '0431 665 109', subjects: ['English', 'Modern History'], active: true, cap: 7, windows: [['Wednesday', '15:00', '20:00'], ['Friday', '15:30', '20:00']] },
+    { id: 'T-009', name: 'Grace Wu', firstName: 'Grace', lastName: 'Wu', preferredName: '', phone: '0403 929 140', subjects: ['Chemistry', 'Biology'], active: true, cap: 8, windows: [['Tuesday', '16:00', '20:00'], ['Thursday', '15:00', '19:30'], ['Saturday', '09:00', '13:00']] },
+    { id: 'T-010', name: 'Daniel Brooks', firstName: 'Daniel', lastName: 'Brooks', preferredName: '', phone: '0419 235 885', subjects: ['Mathematics', 'Physics'], active: false, cap: 8, windows: [] }
   ],
   sessions: [
     { id: 1, date: '2026-09-22', time: '15:30', duration: 60, student: 'S-0287', tutor: 'T-004', subject: 'Physics', status: 'Booked' },
@@ -209,12 +209,30 @@ export default function App() {
   });
 
   const [tutorForm, setTutorForm] = useState({
+    firstName: '',
+    lastName: '',
+    preferredName: '',
     name: '',
     phone: '',
     subjects: [],
     cap: 8,
     active: true
   });
+
+  // Handle tutor personal detail field changes (MITP426PER2-212)
+  const handleTutorPersonalChange = (field, value) => {
+    setTutorForm(prev => {
+      const next = { ...prev, [field]: value };
+      const fName = (field === 'firstName' ? value : next.firstName) || '';
+      const lName = (field === 'lastName' ? value : next.lastName) || '';
+      const pName = (field === 'preferredName' ? value : next.preferredName) || '';
+      const fullLegal = [fName.trim(), lName.trim()].filter(Boolean).join(' ');
+      next.name = pName.trim()
+        ? (lName.trim() ? `${pName.trim()} ${lName.trim()}` : pName.trim())
+        : fullLegal;
+      return next;
+    });
+  };
   const [isSubjectDropdownOpen, setIsSubjectDropdownOpen] = useState(false);
   const [subjectSearchQuery, setSubjectSearchQuery] = useState('');
   const [customSubjectInput, setCustomSubjectInput] = useState('');
@@ -425,16 +443,30 @@ export default function App() {
       if (id) {
         const item = tutor(id);
         if (item) {
+          let firstName = item.firstName || '';
+          let lastName = item.lastName || '';
+          const preferredName = item.preferredName || '';
+          if (!firstName && !lastName && item.name) {
+            const parts = item.name.trim().split(/\s+/);
+            firstName = parts[0] || '';
+            lastName = parts.slice(1).join(' ') || '';
+          }
           setTutorForm({
-            name: item.name,
-            phone: item.phone,
+            firstName,
+            lastName,
+            preferredName,
+            name: item.name || '',
+            phone: item.phone || '',
             subjects: Array.isArray(item.subjects) ? [...item.subjects] : (item.subjects ? [item.subjects] : []),
             cap: item.cap || 8,
-            active: item.active
+            active: item.active !== false
           });
         }
       } else {
         setTutorForm({
+          firstName: '',
+          lastName: '',
+          preferredName: '',
           name: '',
           phone: '',
           subjects: [],
@@ -460,6 +492,16 @@ export default function App() {
     setEditId(null);
     setFormError('');
     setSessionForm(getInitialSessionForm());
+    setTutorForm({
+      firstName: '',
+      lastName: '',
+      preferredName: '',
+      name: '',
+      phone: '',
+      subjects: [],
+      cap: 8,
+      active: true
+    });
     setIsSubjectDropdownOpen(false);
     setSubjectSearchQuery('');
     setCustomSubjectInput('');
@@ -558,6 +600,19 @@ export default function App() {
         triggerToast('Record added to the centre system.');
       }
     } else if (modalMode === 'tutor') {
+      const fName = (tutorForm.firstName || '').trim();
+      const lName = (tutorForm.lastName || '').trim();
+      const pName = (tutorForm.preferredName || '').trim();
+
+      if (!fName) {
+        setFormError('First name is required.');
+        return;
+      }
+      if (!lName) {
+        setFormError('Last name is required.');
+        return;
+      }
+
       const subjectsList = Array.isArray(tutorForm.subjects)
         ? tutorForm.subjects.map(s => s.trim()).filter(Boolean)
         : tutorForm.subjects.split(',').map(s => s.trim()).filter(Boolean);
@@ -567,12 +622,21 @@ export default function App() {
         return;
       }
 
+      const fullLegalName = [fName, lName].filter(Boolean).join(' ');
+      const displayName = pName
+        ? (lName ? `${pName} ${lName}` : pName)
+        : fullLegalName;
+      const finalName = displayName || tutorForm.name?.trim() || 'New Tutor';
+
       if (editId) {
         setData(prev => ({
           ...prev,
           tutors: prev.tutors.map(t => t.id === editId ? {
             ...t,
-            name: tutorForm.name.trim(),
+            name: finalName,
+            firstName: fName,
+            lastName: lName,
+            preferredName: pName,
             phone: tutorForm.phone.trim(),
             subjects: subjectsList,
             cap: Number(tutorForm.cap) || 8,
@@ -585,7 +649,10 @@ export default function App() {
         const newId = 'T-' + String(maxNum + 1).padStart(3, '0');
         const newTutor = {
           id: newId,
-          name: tutorForm.name.trim(),
+          name: finalName,
+          firstName: fName,
+          lastName: lName,
+          preferredName: pName,
           phone: tutorForm.phone.trim(),
           subjects: subjectsList,
           cap: Number(tutorForm.cap) || 8,
@@ -1459,16 +1526,23 @@ export default function App() {
         <div className="modal" role="dialog" aria-modal="true">
           <div className="modal-head">
             <div>
+              {modalMode === 'tutor' && (
+                <div className="eyebrow modal-profile-eyebrow">
+                  {editId ? `Tutor Profile · Editing ${editId}` : 'Tutor Profile · New Tutor'}
+                </div>
+              )}
               <h2>
                 {modalMode === 'session' && (editId ? 'Update session' : 'Book a session')}
                 {modalMode === 'student' && (editId ? 'Edit student' : 'Add a student')}
-                {modalMode === 'tutor' && (editId ? 'Edit tutor' : 'Add a tutor')}
+                {modalMode === 'tutor' && (editId ? 'Edit tutor profile' : 'Add tutor profile')}
                 {modalMode === 'availability' && 'Add availability'}
               </h2>
               <p>
                 {modalMode === 'session' && 'The booking will be checked against the tutor’s availability before it is saved.'}
                 {modalMode === 'student' && 'Record the details needed to identify the student, contact their family, and book tutoring.'}
-                {modalMode === 'tutor' && 'Inactive tutors remain in history but cannot be selected for a new booking.'}
+                {modalMode === 'tutor' && (editId
+                  ? 'Update tutor personal details and profile information.'
+                  : 'Complete personal details to register a new tutor profile.')}
                 {modalMode === 'availability' && 'A tutor can have several teaching windows across the week.'}
               </p>
             </div>
@@ -1677,25 +1751,117 @@ export default function App() {
               {/* Tutor Modal Fields */}
               {modalMode === 'tutor' && (
                 <>
+                  {/* Section 1: Personal Details (Jira MITP426PER2-212) */}
+                  <div className="field full form-section-divider">
+                    <div className="form-section-header">
+                      <span className="form-section-icon" aria-hidden="true">👤</span>
+                      <div>
+                        <h3 className="form-section-title">Personal Details</h3>
+                        <p className="form-section-subtitle">Tutor identification and name information.</p>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="field">
-                    <label htmlFor="f_tutor_name">Tutor name *</label>
+                    <label htmlFor="f_tutor_first_name">
+                      First name <span className="req-asterisk" aria-hidden="true">*</span>
+                    </label>
                     <input
-                      id="f_tutor_name"
+                      id="f_tutor_first_name"
+                      name="firstName"
                       type="text"
-                      value={tutorForm.name}
-                      onChange={(e) => setTutorForm({ ...tutorForm, name: e.target.value })}
+                      placeholder="e.g. Helen"
+                      value={tutorForm.firstName || ''}
+                      onChange={(e) => handleTutorPersonalChange('firstName', e.target.value)}
                       required
+                      autoComplete="given-name"
                     />
                   </div>
 
                   <div className="field">
+                    <label htmlFor="f_tutor_last_name">
+                      Last name <span className="req-asterisk" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                      id="f_tutor_last_name"
+                      name="lastName"
+                      type="text"
+                      placeholder="e.g. Vasquez"
+                      value={tutorForm.lastName || ''}
+                      onChange={(e) => handleTutorPersonalChange('lastName', e.target.value)}
+                      required
+                      autoComplete="family-name"
+                    />
+                  </div>
+
+                  <div className="field full">
+                    <label htmlFor="f_tutor_preferred_name">
+                      Preferred / Display name
+                    </label>
+                    <input
+                      id="f_tutor_preferred_name"
+                      name="preferredName"
+                      type="text"
+                      placeholder="e.g. Elena (optional nickname or preferred name)"
+                      value={tutorForm.preferredName || ''}
+                      onChange={(e) => handleTutorPersonalChange('preferredName', e.target.value)}
+                      autoComplete="nickname"
+                    />
+                    <span className="hint">
+                      Optional. When specified, this name is displayed on cards, rosters, and session communications.
+                    </span>
+                  </div>
+
+                  {/* Display Name Preview */}
+                  {(tutorForm.firstName || tutorForm.lastName || tutorForm.preferredName) && (
+                    <div className="field full name-preview-box">
+                      <span className="name-preview-badge">Preview</span>
+                      <div className="name-preview-text">
+                        <span className="name-preview-main">
+                          {tutorForm.preferredName?.trim()
+                            ? `${tutorForm.preferredName.trim()} ${tutorForm.lastName?.trim() || ''}`.trim()
+                            : `${tutorForm.firstName?.trim() || ''} ${tutorForm.lastName?.trim() || ''}`.trim()}
+                        </span>
+                        {tutorForm.preferredName?.trim() && tutorForm.firstName?.trim() && (
+                          <span className="name-preview-sub">
+                            (Legal: {tutorForm.firstName.trim()} {tutorForm.lastName?.trim() || ''})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Section 2: Contact Details (Preserving existing phone field for MITP426PER2-213) */}
+                  <div className="field full form-section-divider">
+                    <div className="form-section-header">
+                      <span className="form-section-icon" aria-hidden="true">📞</span>
+                      <div>
+                        <h3 className="form-section-title">Contact Details</h3>
+                        <p className="form-section-subtitle">Phone number for centre coordination.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="field full">
                     <label htmlFor="f_tutor_phone">Phone</label>
                     <input
                       id="f_tutor_phone"
                       type="tel"
-                      value={tutorForm.phone}
-                      onChange={(e) => setTutorForm({ ...tutorForm, phone: e.target.value })}
+                      placeholder="e.g. 0411 800 221"
+                      value={tutorForm.phone || ''}
+                      onChange={(e) => setTutorForm(prev => ({ ...prev, phone: e.target.value }))}
                     />
+                  </div>
+
+                  {/* Section 3: Teaching Subjects & Capacity */}
+                  <div className="field full form-section-divider">
+                    <div className="form-section-header">
+                      <span className="form-section-icon" aria-hidden="true">📚</span>
+                      <div>
+                        <h3 className="form-section-title">Teaching Subjects & Capacity</h3>
+                        <p className="form-section-subtitle">Subjects qualified to teach and weekly session limit.</p>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="field full">
