@@ -37,6 +37,25 @@ const SEED_DATA = {
   ]
 };
 
+const ALL_SUBJECTS = [
+  'Mathematics',
+  'Maths Methods',
+  'Specialist Mathematics',
+  'General Mathematics',
+  'Physics',
+  'Chemistry',
+  'Biology',
+  'English',
+  'English Literature',
+  'Modern History',
+  'Ancient History',
+  'Legal Studies',
+  'Business Studies',
+  'Economics',
+  'Psychology',
+  'Science (Junior)'
+];
+
 // Date & Time utility functions
 function initials(name) {
   if (!name) return '';
@@ -192,10 +211,89 @@ export default function App() {
   const [tutorForm, setTutorForm] = useState({
     name: '',
     phone: '',
-    subjects: '',
+    subjects: [],
     cap: 8,
     active: true
   });
+  const [isSubjectDropdownOpen, setIsSubjectDropdownOpen] = useState(false);
+  const [subjectSearchQuery, setSubjectSearchQuery] = useState('');
+  const [customSubjectInput, setCustomSubjectInput] = useState('');
+  const subjectDropdownRef = useRef(null);
+
+  // Close subject dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (subjectDropdownRef.current && !subjectDropdownRef.current.contains(event.target)) {
+        setIsSubjectDropdownOpen(false);
+      }
+    };
+
+    if (isSubjectDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [isSubjectDropdownOpen]);
+
+  // Aggregate all unique subjects from catalog, tutors, students, and sessions
+  const allAvailableSubjects = useMemo(() => {
+    const set = new Set(ALL_SUBJECTS);
+    (data.tutors || []).forEach(t => (t.subjects || []).forEach(s => s && set.add(s.trim())));
+    (data.students || []).forEach(st => (st.subjects || []).forEach(s => s && set.add(s.trim())));
+    (data.sessions || []).forEach(se => se.subject && set.add(se.subject.trim()));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [data.tutors, data.students, data.sessions]);
+
+  // Filtered subjects based on search query inside dropdown
+  const displayedSubjects = useMemo(() => {
+    if (!subjectSearchQuery.trim()) return allAvailableSubjects;
+    const q = subjectSearchQuery.toLowerCase();
+    return allAvailableSubjects.filter(s => s.toLowerCase().includes(q));
+  }, [allAvailableSubjects, subjectSearchQuery]);
+
+  // Toggle selection of a subject in tutorForm
+  const toggleSubject = (subjectName) => {
+    setTutorForm(prev => {
+      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
+      if (current.includes(subjectName)) {
+        return { ...prev, subjects: current.filter(s => s !== subjectName) };
+      } else {
+        return { ...prev, subjects: [...current, subjectName] };
+      }
+    });
+  };
+
+  const selectAllFiltered = () => {
+    setTutorForm(prev => {
+      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
+      const combined = Array.from(new Set([...current, ...displayedSubjects]));
+      return { ...prev, subjects: combined };
+    });
+  };
+
+  const clearAllFiltered = () => {
+    setTutorForm(prev => {
+      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
+      const filtered = current.filter(s => !displayedSubjects.includes(s));
+      return { ...prev, subjects: filtered };
+    });
+  };
+
+  const handleAddCustomSubject = () => {
+    const trimmed = customSubjectInput.trim();
+    if (!trimmed) return;
+    setTutorForm(prev => {
+      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
+      if (!current.includes(trimmed)) {
+        return { ...prev, subjects: [...current, trimmed] };
+      }
+      return prev;
+    });
+    setCustomSubjectInput('');
+  };
 
   const [availabilityForm, setAvailabilityForm] = useState({
     tutor: '',
@@ -321,13 +419,16 @@ export default function App() {
         });
       }
     } else if (mode === 'tutor') {
+      setIsSubjectDropdownOpen(false);
+      setSubjectSearchQuery('');
+      setCustomSubjectInput('');
       if (id) {
         const item = tutor(id);
         if (item) {
           setTutorForm({
             name: item.name,
             phone: item.phone,
-            subjects: item.subjects.join(', '),
+            subjects: Array.isArray(item.subjects) ? [...item.subjects] : (item.subjects ? [item.subjects] : []),
             cap: item.cap || 8,
             active: item.active
           });
@@ -336,7 +437,7 @@ export default function App() {
         setTutorForm({
           name: '',
           phone: '',
-          subjects: '',
+          subjects: [],
           cap: 8,
           active: true
         });
@@ -359,6 +460,9 @@ export default function App() {
     setEditId(null);
     setFormError('');
     setSessionForm(getInitialSessionForm());
+    setIsSubjectDropdownOpen(false);
+    setSubjectSearchQuery('');
+    setCustomSubjectInput('');
   };
 
   // Submit modal form
@@ -454,7 +558,15 @@ export default function App() {
         triggerToast('Record added to the centre system.');
       }
     } else if (modalMode === 'tutor') {
-      const subjectsList = tutorForm.subjects.split(',').map(s => s.trim()).filter(Boolean);
+      const subjectsList = Array.isArray(tutorForm.subjects)
+        ? tutorForm.subjects.map(s => s.trim()).filter(Boolean)
+        : tutorForm.subjects.split(',').map(s => s.trim()).filter(Boolean);
+
+      if (subjectsList.length === 0) {
+        setFormError('Please select at least one teaching subject for the tutor.');
+        return;
+      }
+
       if (editId) {
         setData(prev => ({
           ...prev,
@@ -586,7 +698,7 @@ export default function App() {
       const matchesState = tutorState === 'all' || (tutorState === 'active' ? t.active : !t.active);
       const matchesQuery = !q ||
         t.name.toLowerCase().includes(q) ||
-        t.subjects.join(' ').toLowerCase().includes(q);
+        (Array.isArray(t.subjects) ? t.subjects : []).join(' ').toLowerCase().includes(q);
       return matchesState && matchesQuery;
     });
   }, [data.tutors, tutorState, tutorSearch]);
@@ -1208,7 +1320,7 @@ export default function App() {
                           </div>
                           <h3>{x.name}</h3>
                           <p>
-                            {x.subjects.join(' · ')}<br />
+                            {(Array.isArray(x.subjects) ? x.subjects : []).join(' · ')}<br />
                             {x.phone}
                           </p>
                           <div className="capacity-row">
@@ -1587,15 +1699,151 @@ export default function App() {
                   </div>
 
                   <div className="field full">
-                    <label htmlFor="f_tutor_subjects">Subjects *</label>
-                    <input
-                      id="f_tutor_subjects"
-                      type="text"
-                      placeholder="e.g. English, Modern History"
-                      value={tutorForm.subjects}
-                      onChange={(e) => setTutorForm({ ...tutorForm, subjects: e.target.value })}
-                      required
-                    />
+                    <label id="label_tutor_subjects">Subjects *</label>
+                    <div className="subject-multiselect-container" ref={subjectDropdownRef}>
+                      <button
+                        type="button"
+                        id="f_tutor_subjects_btn"
+                        className={`subject-dropdown-btn ${isSubjectDropdownOpen ? 'open' : ''}`}
+                        onClick={() => setIsSubjectDropdownOpen(prev => !prev)}
+                        aria-expanded={isSubjectDropdownOpen}
+                        aria-haspopup="listbox"
+                        aria-labelledby="label_tutor_subjects"
+                      >
+                        <span className="dropdown-btn-label">
+                          <span className="dropdown-btn-icon">📚</span>
+                          {(!tutorForm.subjects || tutorForm.subjects.length === 0) ? (
+                            <span className="placeholder">Select teaching subjects...</span>
+                          ) : (
+                            <span className="selected-summary">
+                              <b>{tutorForm.subjects.length}</b> {tutorForm.subjects.length === 1 ? 'subject' : 'subjects'} selected
+                            </span>
+                          )}
+                        </span>
+                        <span className="dropdown-chevron">{isSubjectDropdownOpen ? '▲' : '▼'}</span>
+                      </button>
+
+                      {/* Dropdown Menu */}
+                      {isSubjectDropdownOpen && (
+                        <div className="subject-dropdown-menu" role="listbox" aria-multiselectable="true">
+                          <div className="subject-dropdown-header">
+                            <input
+                              type="text"
+                              className="subject-search-input"
+                              placeholder="Search subjects..."
+                              value={subjectSearchQuery}
+                              onChange={(e) => setSubjectSearchQuery(e.target.value)}
+                              autoFocus
+                            />
+                            <div className="subject-quick-actions">
+                              <span className="subject-counter">
+                                {displayedSubjects.length} subjects
+                              </span>
+                              <div className="subject-action-links">
+                                <button
+                                  type="button"
+                                  className="quick-action-btn"
+                                  onClick={selectAllFiltered}
+                                >
+                                  Select all
+                                </button>
+                                <span className="action-sep">·</span>
+                                <button
+                                  type="button"
+                                  className="quick-action-btn"
+                                  onClick={clearAllFiltered}
+                                >
+                                  Clear
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="subject-options-list">
+                            {displayedSubjects.map(sub => {
+                              const isSelected = Array.isArray(tutorForm.subjects) && tutorForm.subjects.includes(sub);
+                              return (
+                                <div
+                                  key={sub}
+                                  className={`subject-option-item ${isSelected ? 'selected' : ''}`}
+                                  onClick={() => toggleSubject(sub)}
+                                  role="option"
+                                  aria-selected={isSelected}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => {}}
+                                    tabIndex={-1}
+                                  />
+                                  <span className="subject-option-name">{sub}</span>
+                                  {isSelected && <span className="subject-check-icon">✓</span>}
+                                </div>
+                              );
+                            })}
+                            {displayedSubjects.length === 0 && (
+                              <div className="no-subjects-found">
+                                No subjects match "{subjectSearchQuery}"
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="subject-dropdown-footer">
+                            <input
+                              type="text"
+                              className="custom-subject-input"
+                              placeholder="Add other subject..."
+                              value={customSubjectInput}
+                              onChange={(e) => setCustomSubjectInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleAddCustomSubject();
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="btn small soft"
+                              onClick={handleAddCustomSubject}
+                              disabled={!customSubjectInput.trim()}
+                            >
+                              ＋ Add
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Selected Tags / Chips Display */}
+                      {Array.isArray(tutorForm.subjects) && tutorForm.subjects.length > 0 && (
+                        <div className="selected-subject-chips">
+                          {tutorForm.subjects.map(sub => (
+                            <span key={sub} className="subject-chip">
+                              <span>{sub}</span>
+                              <button
+                                type="button"
+                                className="chip-remove"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleSubject(sub);
+                                }}
+                                title={`Remove ${sub}`}
+                                aria-label={`Remove ${sub}`}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                          <button
+                            type="button"
+                            className="clear-all-chips-btn"
+                            onClick={() => setTutorForm(prev => ({ ...prev, subjects: [] }))}
+                          >
+                            Clear all
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="field">
