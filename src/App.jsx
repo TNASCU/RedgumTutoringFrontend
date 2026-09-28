@@ -160,16 +160,23 @@ export default function App() {
   const [editId, setEditId] = useState(null);
   const [formError, setFormError] = useState('');
 
+  // Helper to initialize session form state safely
+  const getInitialSessionForm = () => {
+    const firstActiveStudent = data.students.find(s => s.active)?.id || '';
+    const firstActiveTutor = data.tutors.find(t => t.active)?.id || '';
+    return {
+      student: firstActiveStudent,
+      tutor: firstActiveTutor,
+      date: scheduleMode === 'day' ? selectedDay : '2026-09-22',
+      time: '15:30',
+      duration: 60,
+      subject: '',
+      status: 'Booked'
+    };
+  };
+
   // Form states for modals
-  const [sessionForm, setSessionForm] = useState({
-    student: '',
-    tutor: '',
-    date: '2026-09-22',
-    time: '15:30',
-    duration: 60,
-    subject: '',
-    status: 'Booked'
-  });
+  const [sessionForm, setSessionForm] = useState(getInitialSessionForm);
 
   const [studentForm, setStudentForm] = useState({
     name: '',
@@ -272,27 +279,19 @@ export default function App() {
         const item = data.sessions.find(s => s.id === id);
         if (item) {
           setSessionForm({
-            student: item.student,
-            tutor: item.tutor,
-            date: item.date,
-            time: item.time,
-            duration: item.duration,
-            subject: item.subject,
-            status: item.status
+            student: item.student || '',
+            tutor: item.tutor || '',
+            date: item.date || '2026-09-22',
+            time: item.time || '15:30',
+            duration: Number(item.duration) || 60,
+            subject: item.subject || '',
+            status: item.status || 'Booked'
           });
+        } else {
+          setSessionForm(getInitialSessionForm());
         }
       } else {
-        const firstActiveStudent = data.students.find(s => s.active)?.id || '';
-        const firstActiveTutor = data.tutors.find(t => t.active)?.id || '';
-        setSessionForm({
-          student: firstActiveStudent,
-          tutor: firstActiveTutor,
-          date: scheduleMode === 'day' ? selectedDay : '2026-09-22',
-          time: '15:30',
-          duration: 60,
-          subject: '',
-          status: 'Booked'
-        });
+        setSessionForm(getInitialSessionForm());
       }
     } else if (mode === 'student') {
       if (id) {
@@ -359,6 +358,7 @@ export default function App() {
     setModalOpen(false);
     setEditId(null);
     setFormError('');
+    setSessionForm(getInitialSessionForm());
   };
 
   // Submit modal form
@@ -1429,6 +1429,7 @@ export default function App() {
                       value={sessionForm.duration}
                       onChange={(e) => setSessionForm({ ...sessionForm, duration: Number(e.target.value) })}
                     >
+                      <option value={30}>30 minutes</option>
                       <option value={60}>60 minutes</option>
                       <option value={90}>90 minutes</option>
                     </select>
