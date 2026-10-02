@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { getWeekSchedule } from './services/sessionsService.js';
+import { getWeekSchedule, copyWeekForward, getSession, createSession, updateSession, sessionValidationErrors } from './services/sessionsService.js';
 import { startOfWeek } from './services/scheduleDates.js';
+import { getTutors, getTutorSubjects } from './services/tutorsService.js';
+import { getStudents } from './services/studentsService.js';
 
 // Seed data based on Redgum Tutoring requirements
 const SEED_DATA = {
@@ -92,28 +94,6 @@ function endTime(t, d) {
 }
 
 // Validation function enforcing business rule
-function validateAvailability(tutorObj, date, time, duration) {
-  if (!tutorObj || !tutorObj.active) {
-    return 'That tutor is inactive and cannot receive new bookings.';
-  }
-  const day = dayName(date);
-  const start = mins(time);
-  const end = start + Number(duration);
-  const matches = (tutorObj.windows || []).filter(w => w[0] === day);
-
-  if (!matches.length) {
-    return `${tutorObj.name} has no availability recorded on ${day}.`;
-  }
-
-  const fitsInWindow = matches.some(w => start >= mins(w[1]) && end <= mins(w[2]));
-  if (!fitsInWindow) {
-    const windowTimes = matches.map(w => `${w[1]}–${w[2]}`).join(', ');
-    return `${time}–${endTime(time, duration)} falls outside ${tutorObj.name}’s ${day} availability (${windowTimes}).`;
-  }
-
-  return '';
-}
-
 export default function App() {
   // Master persistent state initialized from localStorage
   const [data, setData] = useState(() => {
@@ -147,6 +127,45 @@ export default function App() {
 
   const [today, setToday] = useState(() => iso(new Date()));
   const [schedule, setSchedule] = useState({ key: '', sessions: [], tutors: [], loading: true, error: '' });
+  const copyDialogRef = useRef(null);
+  const copyPendingRef = useRef(false);
+  const [copySourceWeek, setCopySourceWeek] = useState('');
+  const [copyPending, setCopyPending] = useState(false);
+  const [copyError, setCopyError] = useState('');
+  const [copyResult, setCopyResult] = useState(null);
+  const copyTargetDate = copySourceWeek ? localDate(copySourceWeek) : null;
+  if (copyTargetDate) copyTargetDate.setDate(copyTargetDate.getDate() + 7);
+  const copyTargetWeek = copyTargetDate ? iso(copyTargetDate) : '';
+  const weekRange = (date) => {
+    const end = localDate(date);
+    end.setDate(end.getDate() + 6);
+    return fmtDate(date, { day: 'numeric', month: 'short', year: 'numeric' }) + ' to ' + fmtDate(iso(end), { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+  const handleCopyWeek = async () => {
+    if (copyPendingRef.current || !copySourceWeek) return;
+    copyPendingRef.current = true;
+    setCopyPending(true);
+    setCopyError('');
+    try {
+      const result = await copyWeekForward(copySourceWeek);
+      setWeekStart(localDate(result.targetWeekStart));
+      const tuesday = localDate(result.targetWeekStart);
+      tuesday.setDate(tuesday.getDate() + 1);
+      setSelectedDay(iso(tuesday));
+      setScheduleMode('week');
+      setBoardTutor('');
+      setBoardSearch('');
+      setScheduleRefresh(value => value + 1);
+      setCopyResult(result);
+      copyDialogRef.current.close();
+    } catch (error) {
+      const messages = sessionValidationErrors(error);
+      setCopyError(messages.length ? messages.join(' ') : error.message);
+    } finally {
+      copyPendingRef.current = false;
+      setCopyPending(false);
+    }
+  };
   const [scheduleRefresh, setScheduleRefresh] = useState(0);
   const scheduleWeek = iso(scheduleMode === 'day' ? startOfWeek(localDate(selectedDay)) : weekStart);
   const scheduleKey = scheduleWeek + ':' + scheduleRefresh;
@@ -208,21 +227,99 @@ export default function App() {
 
   // Helper to initialize session form state safely
   const getInitialSessionForm = () => {
-    const firstActiveStudent = data.students.find(s => s.active)?.id || '';
-    const firstActiveTutor = data.tutors.find(t => t.active)?.id || '';
+    const firstActiveStudent = ''; // Select a backend student.
+    const firstActiveTutor = ''; // Backend tutor is chosen after opening the modal.
     return {
       student: firstActiveStudent,
       tutor: firstActiveTutor,
-      date: scheduleMode === 'day' ? selectedDay : iso(new Date()),
+      date: scheduleMode === 'day' ? selectedDay : (() => {
+        const now = new Date();
+        if (iso(startOfWeek(now)) === iso(weekStart) && now.getDay() >= 2 && now.getDay() <= 6) return iso(now);
+        const tuesday = new Date(weekStart);
+        tuesday.setDate(tuesday.getDate() + 1);
+        return iso(tuesday);
+      })(),
       time: '15:30',
       duration: 60,
       subject: '',
+      subjectId: '',
       status: 'Booked'
     };
   };
 
   // Form states for modals
   const [sessionForm, setSessionForm] = useState(getInitialSessionForm);
+
+  const [sessionEditMode, setSessionEditMode] = useState(false);
+  const savedSessionForm = useRef(null);
+  const [sessionDetails, setSessionDetails] = useState({ loading: false, error: '' });
+  const [detailsRetry, setDetailsRetry] = useState(0);
+  useEffect(() => {
+    if (!modalOpen || modalMode !== 'session' || !editId) return;
+    const controller = new AbortController();
+    getSession(editId, { signal: controller.signal }).then(session => {
+      if (controller.signal.aborted) return;
+      const loadedForm = {
+        student: String(session.studentId), tutor: String(session.tutorId),
+        subjectId: String(session.subjectId), subject: '', date: session.sessionDate,
+        time: session.startTime.slice(0, 5), duration: session.duration,
+        status: session.status ? session.status[0].toUpperCase() + session.status.slice(1).toLowerCase() : 'Unknown',
+        notes: session.notes || '', lessonNotes: session.lessonNotes || '',
+      };
+      savedSessionForm.current = loadedForm;
+      setSessionForm(loadedForm);
+      setSessionDetails({ loading: false, error: '' });
+    }).catch(error => {
+      if (!controller.signal.aborted) setSessionDetails({ loading: false, error: error.message });
+    });
+    return () => controller.abort();
+  }, [modalOpen, modalMode, editId, detailsRetry]);
+
+  const [bookingStudents, setBookingStudents] = useState({ items: [], ready: false, error: '' });
+  const [sessionErrors, setSessionErrors] = useState([]);
+  const [sessionSaving, setSessionSaving] = useState(false);
+  const sessionSavingRef = useRef(false);
+  const [bookingTutors, setBookingTutors] = useState({ items: [], ready: false, error: '' });
+  const [bookingSubjects, setBookingSubjects] = useState({ tutorId: '', items: [], error: '' });
+  const [bookingRetry, setBookingRetry] = useState(0);
+  const subjectsLoading = Boolean(sessionForm.tutor) && bookingSubjects.tutorId !== sessionForm.tutor;
+  const selectedBookingStudent = bookingStudents.items.find(student => String(student.studentId) === sessionForm.student);
+  const subjectOptions = subjectsLoading ? [] : bookingSubjects.items.filter(subject =>
+    (editId && String(subject.subjectId) === sessionForm.subjectId) || selectedBookingStudent?.subjects?.some(assigned => assigned.subjectId === subject.subjectId));
+
+  useEffect(() => {
+    if (!modalOpen || modalMode !== 'session') return;
+    const controller = new AbortController();
+    getStudents({ signal: controller.signal }).then(items => {
+      if (!controller.signal.aborted) setBookingStudents({ items, ready: true, error: '' });
+    }).catch(error => {
+      if (!controller.signal.aborted) setBookingStudents({ items: [], ready: true, error: error.message });
+    });
+    return () => controller.abort();
+  }, [modalOpen, modalMode, bookingRetry]);
+
+  useEffect(() => {
+    if (!modalOpen || modalMode !== 'session') return;
+    const controller = new AbortController();
+    getTutors({ signal: controller.signal }).then(items => {
+      if (!controller.signal.aborted) setBookingTutors({ items, ready: true, error: '' });
+    }).catch(error => {
+      if (!controller.signal.aborted) setBookingTutors({ items: [], ready: true, error: error.message });
+    });
+    return () => controller.abort();
+  }, [modalOpen, modalMode, bookingRetry]);
+
+  useEffect(() => {
+    if (!modalOpen || modalMode !== 'session' || !sessionForm.tutor) return;
+    const controller = new AbortController();
+    const tutorId = sessionForm.tutor;
+    getTutorSubjects(tutorId, { signal: controller.signal }).then(items => {
+      if (!controller.signal.aborted) setBookingSubjects({ tutorId, items, error: '' });
+    }).catch(error => {
+      if (!controller.signal.aborted) setBookingSubjects({ tutorId, items: [], error: error.message });
+    });
+    return () => controller.abort();
+  }, [modalOpen, modalMode, sessionForm.tutor, bookingRetry]);
 
   const [studentForm, setStudentForm] = useState({
     name: '',
@@ -392,24 +489,14 @@ export default function App() {
     setFormError('');
 
     if (mode === 'session') {
-      if (id) {
-        const item = data.sessions.find(s => s.id === id);
-        if (item) {
-          setSessionForm({
-            student: item.student || '',
-            tutor: item.tutor || '',
-            date: item.date || '2026-09-22',
-            time: item.time || '15:30',
-            duration: Number(item.duration) || 60,
-            subject: item.subject || '',
-            status: item.status || 'Booked'
-          });
-        } else {
-          setSessionForm(getInitialSessionForm());
-        }
-      } else {
-        setSessionForm(getInitialSessionForm());
-      }
+      setSessionEditMode(false);
+      savedSessionForm.current = null;
+      setSessionErrors([]);
+      setBookingStudents({ items: [], ready: false, error: '' });
+      setBookingTutors({ items: [], ready: false, error: '' });
+      setBookingSubjects({ tutorId: '', items: [], error: '' });
+      setSessionDetails({ loading: Boolean(id), error: '' });
+      setSessionForm(getInitialSessionForm());
     } else if (mode === 'student') {
       if (id) {
         const item = student(id);
@@ -489,6 +576,7 @@ export default function App() {
   };
 
   const closeModal = () => {
+    if (sessionSavingRef.current) return;
     setModalOpen(false);
     setEditId(null);
     setFormError('');
@@ -509,58 +597,43 @@ export default function App() {
   };
 
   // Submit modal form
-  const handleModalSubmit = (e) => {
+  const handleModalSubmit = async (e) => {
     e.preventDefault();
     setFormError('');
 
     if (modalMode === 'session') {
-      const assignedTutor = tutor(sessionForm.tutor);
-      const error = validateAvailability(assignedTutor, sessionForm.date, sessionForm.time, Number(sessionForm.duration));
-
-      const assignedStudent = student(sessionForm.student);
-      if (!assignedStudent?.active && !editId) {
-        setFormError('Inactive students cannot receive new bookings.');
+      if (sessionSavingRef.current) return;
+      setSessionErrors([]);
+      if (editId && !sessionEditMode) return;
+      if (!sessionForm.student || !sessionForm.tutor || !sessionForm.subjectId ||
+          !sessionForm.date || !sessionForm.time || ![60, 90].includes(Number(sessionForm.duration)) ||
+          !subjectOptions.some(subject => String(subject.subjectId) === sessionForm.subjectId)) {
+        setFormError('Choose a student, tutor, shared subject, date, start time, and a duration of 60 or 90 minutes.');
         return;
       }
-
-      if (error) {
-        setFormError(error);
-        return;
+      sessionSavingRef.current = true;
+      setSessionSaving(true);
+      try {
+        if (editId) await updateSession(editId, sessionForm);
+        else await createSession(sessionForm);
+        setWeekStart(startOfWeek(localDate(sessionForm.date)));
+        setSelectedDay(sessionForm.date);
+        setScheduleRefresh(value => value + 1);
+        setCurrentPage('schedule');
+        setBoardTutor('');
+        setBoardSearch('');
+        setModalOpen(false);
+        setEditId(null);
+        triggerToast(editId ? 'Session updated successfully.' : 'Session booked successfully.');
+      } catch (error) {
+        const messages = sessionValidationErrors(error);
+        setSessionErrors(messages);
+        setFormError(messages.length ? 'Please correct the following booking details.' : error.message);
+      } finally {
+        sessionSavingRef.current = false;
+        setSessionSaving(false);
       }
-
-      if (editId) {
-        setData(prev => ({
-          ...prev,
-          sessions: prev.sessions.map(s => s.id === editId ? {
-            ...s,
-            student: sessionForm.student,
-            tutor: sessionForm.tutor,
-            date: sessionForm.date,
-            time: sessionForm.time,
-            duration: Number(sessionForm.duration),
-            subject: sessionForm.subject.trim(),
-            status: sessionForm.status
-          } : s)
-        }));
-        triggerToast('Changes saved.');
-      } else {
-        const nextId = Math.max(0, ...data.sessions.map(s => s.id)) + 1;
-        const newSession = {
-          id: nextId,
-          student: sessionForm.student,
-          tutor: sessionForm.tutor,
-          date: sessionForm.date,
-          time: sessionForm.time,
-          duration: Number(sessionForm.duration),
-          subject: sessionForm.subject.trim(),
-          status: 'Booked'
-        };
-        setData(prev => ({
-          ...prev,
-          sessions: [...prev.sessions, newSession]
-        }));
-        triggerToast('Record added to the centre system.');
-      }
+      return;
     } else if (modalMode === 'student') {
       const subjectsList = studentForm.subjects.split(',').map(s => s.trim()).filter(Boolean);
       if (editId) {
@@ -853,10 +926,11 @@ export default function App() {
                   <div>
                     <div className="eyebrow">Week at a glance</div>
                     <h1>Centre schedule</h1>
-                    <p>Live schedule, Tuesday to Saturday. Booking changes are not connected yet.</p>
+                    <p>Live schedule, Tuesday to Saturday. Create a new booking to add a session.</p>
                   </div>
                   <div className="head-actions">
                     <button className="btn ghost" onClick={() => window.print()}>Print week</button>
+                    <button className="btn" onClick={() => { setCopySourceWeek(scheduleWeek); setCopyError(''); setCopyResult(null); copyDialogRef.current.showModal(); }}>Copy week forward</button>
                     <button className="btn primary" onClick={() => openModal('session')}>＋ New session</button>
                   </div>
                 </div>
@@ -934,6 +1008,20 @@ export default function App() {
                   </select>
                 </div>
 
+                {copyResult && (
+                  <section className="copy-result" aria-label="Copy week result">
+                    <div className="copy-result-icon" aria-hidden="true">&#10003;</div>
+                    <div className="copy-result-content" role="status">
+                      <h2>{copyResult.copiedCount > 0 ? 'Week copied successfully' : 'Copy complete - no sessions added'}</h2>
+                      <p>Destination: {weekRange(copyResult.targetWeekStart)}</p>
+                      <dl className="copy-result-counts">
+                        <div><dt>Sessions copied</dt><dd>{copyResult.copiedCount}</dd></div>
+                        <div className="copy-result-skipped"><dt>Sessions skipped</dt><dd>{copyResult.skippedCount}</dd></div>
+                      </dl>
+                    </div>
+                    <button type="button" className="copy-result-dismiss" aria-label="Dismiss copy result" onClick={() => setCopyResult(null)}>&#215;</button>
+                  </section>
+                )}
                 {scheduleLoading && <p role="status">Loading schedule...</p>}
                 {!scheduleLoading && schedule.error && <div className="notice error" role="alert"><span>{schedule.error}</span><button className="btn" onClick={() => setScheduleRefresh(value => value + 1)}>Retry</button></div>}
                 <div
@@ -1495,6 +1583,18 @@ export default function App() {
         </button>
       </nav>
 
+      <dialog ref={copyDialogRef} className="modal copy-week-dialog" aria-labelledby="copy-week-title" aria-describedby="copy-week-description" onCancel={event => { if (copyPendingRef.current) event.preventDefault(); }}>
+        <div className="modal-head"><h2 id="copy-week-title">Copy week forward?</h2></div>
+        <p id="copy-week-description">Copy the full source week into the following week. This includes Monday and Sunday and is not limited by the schedule's search or tutor filter.</p>
+        {copySourceWeek && <p><strong>From:</strong> {weekRange(copySourceWeek)}<br /><strong>To:</strong> {weekRange(copyTargetWeek)}</p>}
+        {copyError && <div className="form-error" role="alert" style={{ display: 'block' }}>{copyError}</div>}
+        {copyPending && <p role="status">Copying sessions...</p>}
+        <div className="modal-actions">
+          <button type="button" className="btn" autoFocus disabled={copyPending} onClick={() => copyDialogRef.current.close()}>Cancel</button>
+          <button type="button" className="btn primary" disabled={copyPending} onClick={handleCopyWeek}>{copyPending ? 'Copying...' : 'Confirm copy'}</button>
+        </div>
+      </dialog>
+
       {/* Modal Dialog Layer */}
       <div
         className={`modal-layer ${modalOpen ? 'open' : ''}`}
@@ -1512,7 +1612,7 @@ export default function App() {
                 </div>
               )}
               <h2>
-                {modalMode === 'session' && (editId ? 'Update session' : 'Book a session')}
+                {modalMode === 'session' && (editId ? (sessionEditMode ? 'Edit session' : 'Session details') : 'Book a session')}
                 {modalMode === 'student' && (editId ? 'Edit student' : 'Add a student')}
                 {modalMode === 'tutor' && (editId ? 'Edit tutor profile' : 'Add tutor profile')}
                 {modalMode === 'availability' && 'Add availability'}
@@ -1530,6 +1630,10 @@ export default function App() {
           </div>
 
           <form onSubmit={handleModalSubmit}>
+            {modalMode === 'session' && editId && sessionDetails.loading && <p role="status">Loading session details...</p>}
+            {modalMode === 'session' && editId && sessionDetails.error && <div role="alert">{sessionDetails.error}<button type="button" className="btn" onClick={() => { setSessionDetails({ loading: true, error: '' }); setDetailsRetry(value => value + 1); }}>Retry</button></div>}
+            {modalMode === 'session' && editId && !sessionDetails.loading && !sessionDetails.error && <p>Session #{editId}. {sessionEditMode ? 'Update the details and save your changes.' : 'Select Edit to change this session.'}</p>}
+            <fieldset disabled={sessionSaving || (modalMode === 'session' && Boolean(editId) && (!sessionEditMode || sessionDetails.loading || Boolean(sessionDetails.error)))} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="form-grid">
               {/* Session Modal Fields */}
               {modalMode === 'session' && (
@@ -1539,14 +1643,13 @@ export default function App() {
                     <select
                       id="f_student"
                       value={sessionForm.student}
-                      onChange={(e) => setSessionForm({ ...sessionForm, student: e.target.value })}
+                      onChange={(e) => setSessionForm({ ...sessionForm, student: e.target.value, subject: '', subjectId: '' })}
+                      disabled={!bookingStudents.ready || Boolean(bookingStudents.error)}
                       required
                     >
-                      {data.students
-                        .filter(s => s.active || s.id === sessionForm.student)
-                        .map(s => (
-                          <option key={s.id} value={s.id}>{s.name} · Year {s.year}</option>
-                        ))}
+                      <option value="">{bookingStudents.ready ? 'Select a student' : 'Loading students...'}</option>
+                      {editId && sessionForm.student && !bookingStudents.items.some(student => String(student.studentId) === sessionForm.student) && <option value={sessionForm.student}>Student #{sessionForm.student}</option>}
+                      {bookingStudents.items.map(student => <option key={student.studentId} value={student.studentId}>{student.studentName}</option>)}
                     </select>
                   </div>
 
@@ -1555,14 +1658,13 @@ export default function App() {
                     <select
                       id="f_tutor"
                       value={sessionForm.tutor}
-                      onChange={(e) => setSessionForm({ ...sessionForm, tutor: e.target.value })}
+                      onChange={(e) => { setSessionForm({ ...sessionForm, tutor: e.target.value, subject: '', subjectId: '' }); setBookingSubjects({ tutorId: '', items: [], error: '' }); }}
+                      disabled={!bookingTutors.ready || Boolean(bookingTutors.error)}
                       required
                     >
-                      {data.tutors
-                        .filter(t => t.active || t.id === sessionForm.tutor)
-                        .map(t => (
-                          <option key={t.id} value={t.id}>{t.name}</option>
-                        ))}
+                      {<option value="">{bookingTutors.ready ? 'Select a tutor' : 'Loading tutors...'}</option>}
+                      {editId && sessionForm.tutor && !bookingTutors.items.some(tutor => String(tutor.tutorId) === sessionForm.tutor) && <option value={sessionForm.tutor}>Tutor #{sessionForm.tutor}</option>}
+                      {bookingTutors.items.filter(t => t.isActive || (editId && String(t.tutorId) === sessionForm.tutor)).map(t => <option key={t.tutorId} value={t.tutorId}>{t.tutorName}</option>)}
                     </select>
                   </div>
 
@@ -1595,7 +1697,6 @@ export default function App() {
                       value={sessionForm.duration}
                       onChange={(e) => setSessionForm({ ...sessionForm, duration: Number(e.target.value) })}
                     >
-                      <option value={30}>30 minutes</option>
                       <option value={60}>60 minutes</option>
                       <option value={90}>90 minutes</option>
                     </select>
@@ -1603,16 +1704,25 @@ export default function App() {
 
                   <div className="field full">
                     <label htmlFor="f_subject">Subject *</label>
-                    <input
+                    <select
                       id="f_subject"
-                      type="text"
-                      placeholder="e.g. Mathematics, Physics"
-                      value={sessionForm.subject}
-                      onChange={(e) => setSessionForm({ ...sessionForm, subject: e.target.value })}
+                      value={sessionForm.subjectId || ''}
+                      onChange={(e) => {
+                        const subject = subjectOptions.find(item => String(item.subjectId) === e.target.value);
+                        setSessionForm({ ...sessionForm, subjectId: e.target.value, subject: subject?.subjectName || '' });
+                      }}
+                      disabled={!sessionForm.student || !sessionForm.tutor || subjectsLoading || !subjectOptions.length}
                       required
-                    />
+                    >
+                      <option value="">{!sessionForm.student ? 'Select a student first' : !sessionForm.tutor ? 'Select a tutor first' : subjectsLoading ? 'Loading subjects...' : bookingSubjects.error ? 'Unable to load subjects' : !subjectOptions.length ? 'No shared subjects for this student and tutor' : 'Select a subject'}</option>
+                      {editId && sessionForm.subjectId && !subjectOptions.some(subject => String(subject.subjectId) === sessionForm.subjectId) && <option value={sessionForm.subjectId}>Subject #{sessionForm.subjectId}</option>}
+                      {subjectOptions.map(subject => <option key={subject.subjectId} value={subject.subjectId}>{subject.subjectName}{subject.subjectClass ? ' - Year ' + subject.subjectClass : ''}</option>)}
+                    </select>
+                    {(bookingStudents.error || bookingTutors.error || bookingSubjects.error) && <div role="alert"><span>{bookingStudents.error || bookingTutors.error || bookingSubjects.error}</span><button type="button" className="btn small" onClick={() => { setBookingSubjects({ tutorId: '', items: [], error: '' }); setBookingRetry(value => value + 1); }}>Retry</button></div>}
+                    {bookingTutors.ready && !bookingTutors.error && !bookingTutors.items.length && <p role="status">No active tutors available.</p>}
                   </div>
 
+                  {editId && <><div className="field full"><label htmlFor="f_notes">Notes</label><textarea id="f_notes" value={sessionForm.notes || ''} onChange={e => setSessionForm({ ...sessionForm, notes: e.target.value })} /></div><div className="field full"><label htmlFor="f_lesson_notes">Lesson notes</label><textarea id="f_lesson_notes" value={sessionForm.lessonNotes || ''} onChange={e => setSessionForm({ ...sessionForm, lessonNotes: e.target.value })} /></div></>}
                   {editId && (
                     <div className="field full">
                       <label htmlFor="f_status">Status</label>
@@ -2076,17 +2186,26 @@ export default function App() {
               )}
             </div>
 
+            </fieldset>
             {formError && (
               <div className="form-error" role="alert" style={{ display: 'block' }}>
                 {formError}
+                {modalMode === 'session' && sessionErrors.length > 0 && <ul>{sessionErrors.map((message, index) => <li key={index}>{message}</li>)}</ul>}
               </div>
             )}
 
             <div className="modal-actions">
               <button type="button" className="btn" onClick={closeModal}>Cancel</button>
-              <button type="submit" className="btn primary">
-                {editId ? 'Save changes' : `Add ${modalMode}`}
-              </button>
+              {modalMode === 'session' && editId && !sessionEditMode ? (
+                <button type="button" className="btn primary" disabled={sessionDetails.loading || Boolean(sessionDetails.error) || !bookingStudents.ready || !bookingTutors.ready || subjectsLoading || Boolean(bookingStudents.error || bookingTutors.error || bookingSubjects.error)} onClick={() => { setFormError(''); setSessionErrors([]); setSessionEditMode(true); }}>Edit</button>
+              ) : (
+                <>
+                  {modalMode === 'session' && editId && <button type="button" className="btn" disabled={sessionSaving} onClick={() => { setSessionForm({ ...savedSessionForm.current }); setSessionEditMode(false); setFormError(''); setSessionErrors([]); }}>Cancel editing</button>}
+                  <button type="submit" className="btn primary" disabled={sessionSaving || (modalMode === 'session' && (!sessionForm.subjectId || subjectsLoading || !bookingStudents.ready || !bookingTutors.ready || Boolean(bookingStudents.error || bookingTutors.error || bookingSubjects.error)))}>
+                    {sessionSaving ? 'Saving...' : editId ? 'Save changes' : 'Add ' + modalMode}
+                  </button>
+                </>
+              )}
             </div>
           </form>
         </div>
