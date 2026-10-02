@@ -78,3 +78,31 @@ npm run build
 - `src/index.css` - Custom design system tokens, typography, layouts, and responsive breakpoints.
 - `src/main.jsx` - React entry point mounting to `#root`.
 - `index.html` - HTML shell with typography and metadata.
+
+## API service foundation
+
+The shared client lives in `src/services/apiClient.js` and uses native `fetch`.
+No additional dependencies are required. The UI still uses its existing local data;
+the schedule now loads Tuesday-to-Saturday sessions from the backend. Other pages still use local data.
+
+Development requests use `/api`, proxied by Vite to `http://localhost:5000/api`. To override it, copy
+`.env.example` to `.env.local`, update `VITE_API_BASE_URL`, and restart Vite.
+Use `/api` for the local proxy or an absolute backend URL including the `/api` prefix. Vite exposes `VITE_` variables
+in the browser bundle, so they must not contain secrets. Set the deployed backend
+URL when building for production.
+
+Future domain services should import `apiClient` from `src/services/index.js`
+and pass paths relative to the API root (without repeating `/api`). The client
+provides `get(path, options)`, `delete(path, options)`, and
+`post/put/patch(path, body, options)`. Options support `query`, `headers`, and
+an AbortController `signal`. Query arrays become repeated parameters; null and
+undefined values are omitted. Bodies are JSON by default; FormData is also supported.
+
+Successful responses return parsed JSON, text, or `null` for an empty body.
+`ApiError` exposes `status` and `data`, preserving server validation details.
+Network errors have status `0`; cancellation retains the original abort error.
+Authentication can be configured once the backend's authentication contract is known.
+
+When using an absolute backend URL instead of the development proxy, configure backend CORS
+to allow the frontend's origin (normally `http://localhost:5173`) and the required
+HTTP methods and headers, including `Content-Type`.
