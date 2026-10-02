@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { getWeekSchedule } from './services/sessionsService.js';
+import { startOfWeek } from './services/scheduleDates.js';
 
 // Seed data based on Redgum Tutoring requirements
 const SEED_DATA = {
@@ -20,9 +22,9 @@ const SEED_DATA = {
     { id: 'T-010', name: 'Daniel Brooks', firstName: 'Daniel', lastName: 'Brooks', preferredName: '', phone: '0419 235 885', subjects: ['Mathematics', 'Physics'], active: false, cap: 8, windows: [] }
   ],
   sessions: [
-    { id: 1, date: '2026-09-22', time: '15:30', duration: 60, student: 'S-0287', tutor: 'T-004', subject: 'Physics', status: 'Booked' },
-    { id: 2, date: '2026-09-22', time: '16:45', duration: 60, student: 'S-0294', tutor: 'T-004', subject: 'Mathematics', status: 'Booked' },
-    { id: 3, date: '2026-09-22', time: '18:00', duration: 60, student: 'S-0302', tutor: 'T-004', subject: 'Chemistry', status: 'Booked' },
+    { id: 1, date: iso(new Date()), time: '15:30', duration: 60, student: 'S-0287', tutor: 'T-004', subject: 'Physics', status: 'Booked' },
+    { id: 2, date: iso(new Date()), time: '16:45', duration: 60, student: 'S-0294', tutor: 'T-004', subject: 'Mathematics', status: 'Booked' },
+    { id: 3, date: iso(new Date()), time: '18:00', duration: 60, student: 'S-0302', tutor: 'T-004', subject: 'Chemistry', status: 'Booked' },
     { id: 4, date: '2026-09-23', time: '15:30', duration: 60, student: 'S-0305', tutor: 'T-001', subject: 'Mathematics', status: 'Booked' },
     { id: 5, date: '2026-09-23', time: '16:45', duration: 90, student: 'S-0308', tutor: 'T-001', subject: 'Maths Methods', status: 'Booked' },
     { id: 6, date: '2026-09-24', time: '16:00', duration: 60, student: 'S-0287', tutor: 'T-004', subject: 'Physics', status: 'Booked' },
@@ -136,15 +138,40 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState('schedule');
 
   // Schedule View States
-  const [weekStart, setWeekStart] = useState(() => new Date(2026, 8, 21)); // Monday 21 Sep 2026
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [scheduleMode, setScheduleMode] = useState('week'); // 'week' | 'day'
-  const [selectedDay, setSelectedDay] = useState('2026-09-22');
+  const [selectedDay, setSelectedDay] = useState(() => iso(new Date()));
   const [density, setDensity] = useState('detailed'); // 'detailed' | 'minimal'
   const [boardSearch, setBoardSearch] = useState('');
   const [boardTutor, setBoardTutor] = useState('');
-  const [scheduleNotice, setScheduleNotice] = useState('');
-  const [dragOverDate, setDragOverDate] = useState(null);
-  const [draggingSessionId, setDraggingSessionId] = useState(null);
+
+  const [today, setToday] = useState(() => iso(new Date()));
+  const [schedule, setSchedule] = useState({ key: '', sessions: [], tutors: [], loading: true, error: '' });
+  const [scheduleRefresh, setScheduleRefresh] = useState(0);
+  const scheduleWeek = iso(scheduleMode === 'day' ? startOfWeek(localDate(selectedDay)) : weekStart);
+  const scheduleKey = scheduleWeek + ':' + scheduleRefresh;
+  const scheduleLoading = schedule.loading || schedule.key !== scheduleKey;
+  const scheduleSessions = scheduleLoading || schedule.error ? [] : schedule.sessions;
+
+  useEffect(() => {
+    const updateToday = () => setToday(iso(new Date()));
+    const timer = setInterval(updateToday, 1000);
+    window.addEventListener('focus', updateToday);
+    return () => { clearInterval(timer); window.removeEventListener('focus', updateToday); };
+  }, []);
+
+  useEffect(() => {
+    if (currentPage !== 'schedule') return;
+    const controller = new AbortController();
+    getWeekSchedule(scheduleWeek, { signal: controller.signal })
+      .then(result => {
+        if (!controller.signal.aborted) setSchedule({ ...result, key: scheduleKey, loading: false, error: '' });
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setSchedule({ key: scheduleKey, sessions: [], tutors: [], loading: false, error: error.message });
+      });
+    return () => controller.abort();
+  }, [scheduleWeek, scheduleKey, currentPage]);
 
   // Sessions View States
   const [sessionFilter, setSessionFilter] = useState('');
@@ -186,7 +213,7 @@ export default function App() {
     return {
       student: firstActiveStudent,
       tutor: firstActiveTutor,
-      date: scheduleMode === 'day' ? selectedDay : '2026-09-22',
+      date: scheduleMode === 'day' ? selectedDay : iso(new Date()),
       time: '15:30',
       duration: 60,
       subject: '',
@@ -356,32 +383,6 @@ export default function App() {
       d.setDate(d.getDate() + 1);
       setSelectedDay(iso(d));
     }
-  };
-
-  // Drag and drop handler for schedule board
-  const handleDropSession = (targetDate) => {
-    if (!draggingSessionId) return;
-    const sessionObj = data.sessions.find(s => s.id === draggingSessionId);
-    if (!sessionObj || sessionObj.date === targetDate) {
-      setDraggingSessionId(null);
-      return;
-    }
-
-    const targetTutor = tutor(sessionObj.tutor);
-    const error = validateAvailability(targetTutor, targetDate, sessionObj.time, sessionObj.duration);
-
-    if (error) {
-      setScheduleNotice(error);
-      triggerToast('Move refused — outside tutor availability.');
-    } else {
-      setData(prev => ({
-        ...prev,
-        sessions: prev.sessions.map(s => s.id === sessionObj.id ? { ...s, date: targetDate } : s)
-      }));
-      setScheduleNotice('');
-      triggerToast(`Session moved to ${dayName(targetDate)}.`);
-    }
-    setDraggingSessionId(null);
   };
 
   // Open modal handler
@@ -852,20 +853,13 @@ export default function App() {
                   <div>
                     <div className="eyebrow">Week at a glance</div>
                     <h1>Centre schedule</h1>
-                    <p>Move a card to another day or open it to update the booking.</p>
+                    <p>Live schedule, Tuesday to Saturday. Booking changes are not connected yet.</p>
                   </div>
                   <div className="head-actions">
                     <button className="btn ghost" onClick={() => window.print()}>Print week</button>
                     <button className="btn primary" onClick={() => openModal('session')}>＋ New session</button>
                   </div>
                 </div>
-
-                {scheduleNotice && (
-                  <div className="notice error">
-                    <b>Booking not moved.</b>
-                    <span>{scheduleNotice}</span>
-                  </div>
-                )}
 
                 <div className="toolbar">
                   <div className="week-nav">
@@ -878,16 +872,17 @@ export default function App() {
                     <button onClick={handleNextWeek} aria-label="Next period">›</button>
                   </div>
 
+                  <button className="btn" onClick={() => { const now = new Date(); setToday(iso(now)); setSelectedDay(iso(now)); setWeekStart(startOfWeek(now)); }}>Today</button>
                   <div className="segment">
                     <button
                       className={scheduleMode === 'week' ? 'on' : ''}
-                      onClick={() => setScheduleMode('week')}
+                      onClick={() => { setWeekStart(startOfWeek(localDate(selectedDay))); setScheduleMode('week'); }}
                     >
                       Week
                     </button>
                     <button
                       className={scheduleMode === 'day' ? 'on' : ''}
-                      onClick={() => setScheduleMode('day')}
+                      onClick={() => { setSelectedDay(iso(startOfWeek(localDate(today))) === iso(weekStart) ? today : iso(weekDates[0])); setScheduleMode('day'); }}
                     >
                       Day
                     </button>
@@ -898,7 +893,7 @@ export default function App() {
                       className="select"
                       type="date"
                       value={selectedDay}
-                      onChange={(e) => setSelectedDay(e.target.value)}
+                      onChange={(e) => { if (e.target.value) setSelectedDay(e.target.value); }}
                       aria-label="Choose day"
                     />
                   )}
@@ -933,13 +928,16 @@ export default function App() {
                     onChange={(e) => setBoardTutor(e.target.value)}
                   >
                     <option value="">All tutors</option>
-                    {activeTutors.map(t => (
+                    {schedule.tutors.map(t => (
                       <option key={t.id} value={t.id}>{t.name}</option>
                     ))}
                   </select>
                 </div>
 
+                {scheduleLoading && <p role="status">Loading schedule...</p>}
+                {!scheduleLoading && schedule.error && <div className="notice error" role="alert"><span>{schedule.error}</span><button className="btn" onClick={() => setScheduleRefresh(value => value + 1)}>Retry</button></div>}
                 <div
+                  aria-busy={scheduleLoading}
                   className="board"
                   style={{
                     gridTemplateColumns: scheduleMode === 'day' ? 'minmax(280px, 560px)' : undefined
@@ -947,16 +945,16 @@ export default function App() {
                 >
                   {boardDates.map(d => {
                     const ds = iso(d);
-                    const isToday = ds === '2026-09-23';
-                    const items = data.sessions
+                    const isToday = ds === today;
+                    const items = scheduleSessions
                       .filter(x => {
                         const matchesDate = x.date === ds;
-                        const sObj = student(x.student);
-                        const tObj = tutor(x.tutor);
+                        const sObj = { name: x.studentName };
+                        const tObj = { name: x.tutorName };
                         const matchesSearch = !boardSearchLower ||
                           (sObj && sObj.name.toLowerCase().includes(boardSearchLower)) ||
                           (tObj && tObj.name.toLowerCase().includes(boardSearchLower));
-                        const matchesTutor = !boardTutor || x.tutor === boardTutor;
+                        const matchesTutor = !boardTutor || String(x.tutor) === boardTutor;
                         return matchesDate && matchesSearch && matchesTutor;
                       })
                       .sort((a, b) => a.time.localeCompare(b.time));
@@ -976,34 +974,16 @@ export default function App() {
                         </header>
 
                         <div
-                          className={`dropzone ${dragOverDate === ds ? 'over' : ''}`}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = 'move';
-                            setDragOverDate(ds);
-                          }}
-                          onDragLeave={() => setDragOverDate(null)}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            setDragOverDate(null);
-                            handleDropSession(ds);
-                          }}
+                          className="dropzone"
                         >
                           {items.length > 0 ? (
                             items.map(x => {
-                              const s = student(x.student);
-                              const t = tutor(x.tutor);
+                              const s = { name: x.studentName };
+                              const t = { name: x.tutorName };
                               return (
                                 <div
                                   key={x.id}
-                                  className={`session-card ${draggingSessionId === x.id ? 'dragging' : ''}`}
-                                  draggable
-                                  onDragStart={(e) => {
-                                    e.dataTransfer.setData('text/plain', String(x.id));
-                                    e.dataTransfer.effectAllowed = 'move';
-                                    setDraggingSessionId(x.id);
-                                  }}
-                                  onDragEnd={() => setDraggingSessionId(null)}
+                                  className="session-card"
                                 >
                                   <div className="session-top">
                                     <span className="time">{x.time} · {x.duration} min</span>
@@ -1027,7 +1007,7 @@ export default function App() {
                               );
                             })
                           ) : (
-                            <div className="empty">No sessions.<br />Drag a booking here.</div>
+                            <div className="empty">{scheduleLoading ? 'Loading...' : schedule.error ? 'Schedule unavailable.' : 'No sessions.'}</div>
                           )}
                         </div>
                       </article>
