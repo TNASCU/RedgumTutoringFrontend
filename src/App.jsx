@@ -305,6 +305,7 @@ export default function App() {
     });
   };
 
+  // Retained for when custom subject creation is re-enabled
   const handleAddCustomSubject = () => {
     const trimmed = customSubjectInput.trim();
     if (!trimmed) return;
@@ -1979,6 +1980,7 @@ export default function App() {
                             )}
                           </div>
 
+                          {/* Temporarily disabled — custom subject creation will be enabled later.
                           <div className="subject-dropdown-footer">
                             <input
                               type="text"
@@ -2002,6 +2004,7 @@ export default function App() {
                               ＋ Add
                             </button>
                           </div>
+                          */}
                         </div>
                       )}
 
