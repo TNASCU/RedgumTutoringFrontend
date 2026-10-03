@@ -3,6 +3,7 @@ import DateRangePicker from './DateRangePicker';
 import SubjectMultiSelect from './SubjectMultiSelect';
 import * as tutorService from './services/tutorService';
 import * as studentService from './services/studentService';
+import * as sessionService from './services/sessionService';
 
 // Seed data based on Redgum Tutoring requirements
 const SEED_DATA = {
@@ -104,6 +105,9 @@ function validateAvailability(tutorObj, date, time, duration) {
   const matches = (tutorObj.windows || []).filter(w => w[0] === day);
 
   if (!matches.length) {
+    if (!tutorObj.windows || tutorObj.windows.length === 0) {
+      return '';
+    }
     return `${tutorObj.name} has no availability recorded on ${day}.`;
   }
 
@@ -212,10 +216,15 @@ export default function App() {
           apiTutors.map(async (item) => {
             const existing = data.tutors.find(t => t.id === tutorService.formatTutorId(item.tutorId));
             try {
-              const subs = await tutorService.getTutorSubjects(item.tutorId);
-              return tutorService.transformTutorListItemToUI(item, existing, subs);
+              const profile = await tutorService.getTutorById(item.tutorId);
+              return tutorService.transformTutorProfileToUI(profile, existing);
             } catch {
-              return tutorService.transformTutorListItemToUI(item, existing, null);
+              try {
+                const subs = await tutorService.getTutorSubjects(item.tutorId);
+                return tutorService.transformTutorListItemToUI(item, existing, subs);
+              } catch {
+                return tutorService.transformTutorListItemToUI(item, existing, null);
+              }
             }
           })
         );
@@ -237,10 +246,62 @@ export default function App() {
     }
   };
 
+  // Sessions API States
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState(null);
+
+  // Load week schedule from backend API: GET /api/Sessions/week-schedule
+  const loadScheduleFromApi = async (targetWeek = weekStart, targetTutor = boardTutor) => {
+    setSessionsLoading(true);
+    setSessionsError(null);
+    try {
+      const mondayStr = sessionService.formatMonday(targetWeek);
+      const scheduleData = await sessionService.getWeekSchedule({
+        weekStart: mondayStr,
+        tutorId: targetTutor || null
+      });
+      if (scheduleData && typeof scheduleData === 'object') {
+        const apiSessions = sessionService.transformWeekScheduleResponse(scheduleData);
+
+        const startDate = mondayStr;
+        const d = new Date(startDate + 'T12:00:00');
+        d.setDate(d.getDate() + 7);
+        const endDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+        setData(prev => {
+          const remaining = (prev.sessions || []).filter(s => {
+            if (!s.date) return true;
+            const inWeek = s.date >= startDate && s.date < endDate;
+            if (!inWeek) return true;
+            if (targetTutor) {
+              const numTarget = tutorService.extractNumericTutorId(targetTutor);
+              return s.tutor !== targetTutor && s.tutorId !== numTarget;
+            }
+            return false;
+          });
+          return {
+            ...prev,
+            sessions: [...remaining, ...apiSessions]
+          };
+        });
+      }
+    } catch (err) {
+      console.warn('Unable to load schedule from API:', err.message);
+      setSessionsError(err.message || 'Unable to load schedule from the server. Please check backend API connection.');
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadStudentsFromApi();
     loadTutorsFromApi();
+    loadScheduleFromApi(weekStart, boardTutor);
   }, []);
+
+  useEffect(() => {
+    loadScheduleFromApi(weekStart, boardTutor);
+  }, [weekStart, boardTutor]);
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState('');
@@ -339,7 +400,44 @@ export default function App() {
     const num = studentService.extractNumericStudentId(id);
     return data.students.find(x => x.id === id || (num && (x.backendId === num || studentService.extractNumericStudentId(x.id) === num)));
   };
-  const tutor = (id) => data.tutors.find(x => x.id === id);
+  const tutor = (id) => {
+    if (!id) return undefined;
+    const num = tutorService.extractNumericTutorId(id);
+    return data.tutors.find(x => x.id === id || (num && (x.backendId === num || tutorService.extractNumericTutorId(x.id) === num)));
+  };
+
+  // Available subjects for the session modal based on selected student and tutor
+  const modalSubjectOptions = useMemo(() => {
+    if (modalMode !== 'session') return [];
+    const s = student(sessionForm.student);
+    const t = tutor(sessionForm.tutor);
+    const sSubs = (s?.subjects || []).map(x => (typeof x === 'string' ? x : x.subjectName)).filter(Boolean);
+    const tSubs = (t?.subjects || []).map(x => (typeof x === 'string' ? x : x.subjectName)).filter(Boolean);
+    if (sSubs.length > 0 && tSubs.length > 0) {
+      const shared = sSubs.filter(sub => tSubs.some(ts => ts.toLowerCase() === sub.toLowerCase()));
+      if (shared.length > 0) return shared;
+      return Array.from(new Set([...sSubs, ...tSubs]));
+    }
+    return allAvailableSubjects;
+  }, [modalMode, sessionForm.student, sessionForm.tutor, data.students, data.tutors, allAvailableSubjects]);
+
+  // Auto-suggest shared subject when student or tutor changes in session form
+  useEffect(() => {
+    if (modalMode === 'session' && !editId && modalOpen) {
+      const s = student(sessionForm.student);
+      const t = tutor(sessionForm.tutor);
+      if (s && t) {
+        const sSubs = (s.subjects || []).map(x => (typeof x === 'string' ? x : x.subjectName)).filter(Boolean);
+        const tSubs = (t.subjects || []).map(x => (typeof x === 'string' ? x : x.subjectName)).filter(Boolean);
+        const shared = sSubs.filter(sub => tSubs.some(ts => ts.toLowerCase() === sub.toLowerCase()));
+        if (shared.length > 0) {
+          if (!sessionForm.subject || !shared.some(sub => sub.toLowerCase() === sessionForm.subject.toLowerCase())) {
+            setSessionForm(prev => ({ ...prev, subject: shared[0] }));
+          }
+        }
+      }
+    }
+  }, [sessionForm.student, sessionForm.tutor, modalMode, modalOpen, editId]);
 
   // Week dates calculator (Tuesday through Saturday: +1 to +5 days from weekStart Monday)
   const weekDates = useMemo(() => {
@@ -570,17 +668,19 @@ export default function App() {
 
     if (modalMode === 'session') {
       const assignedTutor = tutor(sessionForm.tutor);
-      const error = validateAvailability(assignedTutor, sessionForm.date, sessionForm.time, Number(sessionForm.duration));
-
       const assignedStudent = student(sessionForm.student);
+
       if (!assignedStudent?.active && !editId) {
         setFormError('Inactive students cannot receive new bookings.');
         return;
       }
 
-      if (error) {
-        setFormError(error);
-        return;
+      if (assignedTutor?.windows && assignedTutor.windows.length > 0) {
+        const error = validateAvailability(assignedTutor, sessionForm.date, sessionForm.time, Number(sessionForm.duration));
+        if (error) {
+          setFormError(error);
+          return;
+        }
       }
 
       if (editId) {
@@ -598,23 +698,30 @@ export default function App() {
           } : s)
         }));
         triggerToast('Changes saved.');
+        closeModal();
+        return;
       } else {
-        const nextId = Math.max(0, ...data.sessions.map(s => s.id)) + 1;
-        const newSession = {
-          id: nextId,
-          student: sessionForm.student,
-          tutor: sessionForm.tutor,
-          date: sessionForm.date,
-          time: sessionForm.time,
-          duration: Number(sessionForm.duration),
-          subject: sessionForm.subject.trim(),
-          status: 'Booked'
-        };
-        setData(prev => ({
-          ...prev,
-          sessions: [...prev.sessions, newSession]
-        }));
-        triggerToast('Record added to the centre system.');
+        try {
+          await sessionService.createSession({
+            student: sessionForm.student,
+            tutor: sessionForm.tutor,
+            date: sessionForm.date,
+            time: sessionForm.time,
+            duration: Number(sessionForm.duration),
+            subject: sessionForm.subject.trim()
+          }, {
+            students: data.students,
+            tutors: data.tutors
+          });
+
+          closeModal();
+          await loadScheduleFromApi(weekStart, boardTutor);
+          triggerToast('Record added to the centre system.');
+          return;
+        } catch (err) {
+          setFormError(err.message || 'Failed to create session through API.');
+          return;
+        }
       }
     } else if (modalMode === 'student') {
       const studentName = (studentForm.name || '').trim();
@@ -1091,6 +1198,37 @@ export default function App() {
                   </div>
                 </div>
 
+                {sessionsError && (
+                  <div className="error-banner" style={{
+                    padding: '10px 14px',
+                    background: '#fdf2f2',
+                    border: '1px solid #f8b4b4',
+                    color: '#9b1c1c',
+                    borderRadius: 6,
+                    marginBottom: 16,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <span>{sessionsError}</span>
+                    <button className="btn small" onClick={() => loadScheduleFromApi(weekStart, boardTutor)} style={{ marginLeft: 12 }}>
+                      Retry
+                    </button>
+                  </div>
+                )}
+                {sessionsLoading && (
+                  <div className="loading-banner" style={{
+                    padding: '8px 12px',
+                    background: '#f0f4f8',
+                    borderRadius: 6,
+                    marginBottom: 14,
+                    fontSize: 13,
+                    color: '#334155'
+                  }}>
+                    Loading schedule from server...
+                  </div>
+                )}
+
                 {scheduleNotice && (
                   <div className="notice error">
                     <b>Booking not moved.</b>
@@ -1279,6 +1417,37 @@ export default function App() {
                   </div>
                   <button className="btn primary" onClick={() => openModal('session')}>＋ New session</button>
                 </div>
+
+                {sessionsError && (
+                  <div className="error-banner" style={{
+                    padding: '10px 14px',
+                    background: '#fdf2f2',
+                    border: '1px solid #f8b4b4',
+                    color: '#9b1c1c',
+                    borderRadius: 6,
+                    marginBottom: 16,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <span>{sessionsError}</span>
+                    <button className="btn small" onClick={() => loadScheduleFromApi(weekStart, boardTutor)} style={{ marginLeft: 12 }}>
+                      Retry
+                    </button>
+                  </div>
+                )}
+                {sessionsLoading && (
+                  <div className="loading-banner" style={{
+                    padding: '8px 12px',
+                    background: '#f0f4f8',
+                    borderRadius: 6,
+                    marginBottom: 14,
+                    fontSize: 13,
+                    color: '#334155'
+                  }}>
+                    Loading sessions from server...
+                  </div>
+                )}
 
                 <div className="stats">
                   <div className="stat">
@@ -1944,11 +2113,17 @@ export default function App() {
                     <input
                       id="f_subject"
                       type="text"
+                      list="session_subject_options"
                       placeholder="e.g. Mathematics, Physics"
                       value={sessionForm.subject}
                       onChange={(e) => setSessionForm({ ...sessionForm, subject: e.target.value })}
                       required
                     />
+                    <datalist id="session_subject_options">
+                      {modalSubjectOptions.map(sub => (
+                        <option key={sub} value={sub} />
+                      ))}
+                    </datalist>
                   </div>
 
                   {editId && (
