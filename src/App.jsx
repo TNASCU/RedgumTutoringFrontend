@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import DateRangePicker from './DateRangePicker';
 import SubjectMultiSelect from './SubjectMultiSelect';
 import * as tutorService from './services/tutorService';
+import * as studentService from './services/studentService';
 
 // Seed data based on Redgum Tutoring requirements
 const SEED_DATA = {
@@ -161,6 +162,38 @@ export default function App() {
   const [studentSearch, setStudentSearch] = useState('');
   const [studentState, setStudentState] = useState('active'); // 'active' | 'all' | 'inactive'
   const [studentSelected, setStudentSelected] = useState(() => data.students[0]?.id || null);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentsError, setStudentsError] = useState(null);
+
+  // Load students from backend API: GET /api/Students
+  const loadStudentsFromApi = async () => {
+    setStudentsLoading(true);
+    setStudentsError(null);
+    try {
+      const apiStudents = await studentService.getStudents();
+      if (Array.isArray(apiStudents)) {
+        const studentsWithDetails = apiStudents.map((item) => {
+          const existing = data.students.find(s => s.id === studentService.formatStudentId(item.studentId) || s.backendId === item.studentId);
+          return studentService.transformStudentProfileToUI(item, existing);
+        });
+        setData(prev => ({
+          ...prev,
+          students: studentsWithDetails
+        }));
+        if (studentsWithDetails.length > 0) {
+          setStudentSelected(prev => {
+            const exists = studentsWithDetails.some(s => s.id === prev);
+            return exists ? prev : studentsWithDetails[0].id;
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Unable to load students from API:', err.message);
+      setStudentsError(err.message || 'Unable to load students from the server. Please check backend API connection.');
+    } finally {
+      setStudentsLoading(false);
+    }
+  };
 
   // Tutors View States
   const [tutorSearch, setTutorSearch] = useState('');
@@ -205,6 +238,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    loadStudentsFromApi();
     loadTutorsFromApi();
   }, []);
 
@@ -300,7 +334,11 @@ export default function App() {
   });
 
   // Entity lookup helpers
-  const student = (id) => data.students.find(x => x.id === id);
+  const student = (id) => {
+    if (!id) return undefined;
+    const num = studentService.extractNumericStudentId(id);
+    return data.students.find(x => x.id === id || (num && (x.backendId === num || studentService.extractNumericStudentId(x.id) === num)));
+  };
   const tutor = (id) => data.tutors.find(x => x.id === id);
 
   // Week dates calculator (Tuesday through Saturday: +1 to +5 days from weekStart Monday)
@@ -395,7 +433,7 @@ export default function App() {
           setStudentForm({
             name: item.name || '',
             year: item.year || 10,
-            school: item.school || '',
+            school: item.school && item.school !== 'Unspecified' ? item.school : '',
             guardian: item.guardian || '',
             phone: item.phone || '',
             email: item.email || '',
@@ -403,6 +441,25 @@ export default function App() {
             active: item.active !== false
           });
         }
+        // Connect to GET /api/Students/{id} to refresh profile and subjects
+        studentService.getStudent(id).then(profile => {
+          if (profile) {
+            const transformed = studentService.transformStudentProfileToUI(profile, item);
+            setStudentForm(prev => ({
+              ...prev,
+              name: transformed.name || prev.name,
+              year: transformed.year || prev.year,
+              school: transformed.school && transformed.school !== 'Unspecified' ? transformed.school : prev.school,
+              guardian: transformed.guardian || prev.guardian,
+              phone: transformed.phone || prev.phone,
+              email: transformed.email || prev.email,
+              subjects: transformed.subjects.length > 0 ? transformed.subjects : prev.subjects,
+              active: transformed.active
+            }));
+          }
+        }).catch(err => {
+          console.warn('Could not refresh student from API:', err.message);
+        });
       } else {
         setStudentForm({
           name: '',
@@ -560,6 +617,27 @@ export default function App() {
         triggerToast('Record added to the centre system.');
       }
     } else if (modalMode === 'student') {
+      const studentName = (studentForm.name || '').trim();
+      const guardianName = (studentForm.guardian || '').trim();
+      const phone = (studentForm.phone || '').trim();
+
+      if (!studentName) {
+        setFormError('Student name is required.');
+        return;
+      }
+      if (!guardianName) {
+        setFormError('Family contact name is required.');
+        return;
+      }
+      if (!phone) {
+        setFormError('Phone number is required.');
+        return;
+      }
+      if (phone.length > 12) {
+        setFormError('Phone number cannot exceed 12 characters.');
+        return;
+      }
+
       const subjectsList = Array.isArray(studentForm.subjects)
         ? studentForm.subjects.map(s => s.trim()).filter(Boolean)
         : (typeof studentForm.subjects === 'string' ? studentForm.subjects.split(',').map(s => s.trim()).filter(Boolean) : []);
@@ -569,42 +647,88 @@ export default function App() {
         return;
       }
 
+      const existingStudent = editId ? student(editId) : null;
+
       if (editId) {
-        setData(prev => ({
-          ...prev,
-          students: prev.students.map(s => s.id === editId ? {
-            ...s,
-            name: studentForm.name.trim(),
+        try {
+          const updated = await studentService.updateStudent(editId, {
+            name: studentName,
             year: Number(studentForm.year),
-            school: (studentForm.school !== undefined ? studentForm.school : s.school || '').trim(),
-            guardian: studentForm.guardian.trim(),
-            phone: studentForm.phone.trim(),
-            email: studentForm.email.trim(),
+            school: studentForm.school,
+            guardian: guardianName,
+            phone: phone,
+            email: studentForm.email?.trim() || null,
             subjects: subjectsList,
+            primaryGuardianId: existingStudent?.guardians?.[0]?.guardianId,
+            guardians: existingStudent?.guardians,
+            notes: existingStudent?.notes,
+            availabilityNotes: existingStudent?.availabilityNotes,
+            mediaConsent: existingStudent?.mediaConsent,
+            firstAidNeeded: existingStudent?.firstAidNeeded,
+            shareProgress: existingStudent?.shareProgress
+          });
+
+          // Deactivate student if toggled to inactive: PATCH /api/Students/{id}/deactivate
+          let finalProfile = updated;
+          if (!studentForm.active) {
+            try {
+              finalProfile = await studentService.deactivateStudent(editId);
+            } catch (deactErr) {
+              console.warn('Deactivate API returned:', deactErr.message);
+            }
+          }
+
+          const transformed = studentService.transformStudentProfileToUI(finalProfile, {
+            ...existingStudent,
+            year: Number(studentForm.year),
+            school: studentForm.school?.trim(),
             active: Boolean(studentForm.active)
-          } : s)
-        }));
-        triggerToast('Changes saved.');
+          });
+
+          setData(prev => ({
+            ...prev,
+            students: prev.students.map(s => s.id === editId ? transformed : s)
+          }));
+          triggerToast('Changes saved.');
+          closeModal();
+          return;
+        } catch (err) {
+          setFormError(err.message || 'Failed to update student through API.');
+          return;
+        }
       } else {
-        const maxNum = Math.max(0, ...data.students.map(s => Number(s.id.split('-')[1]) || 0));
-        const newId = 'S-' + String(maxNum + 1).padStart(4, '0');
-        const newStudent = {
-          id: newId,
-          name: studentForm.name.trim(),
-          year: Number(studentForm.year),
-          school: '',
-          guardian: studentForm.guardian.trim(),
-          phone: studentForm.phone.trim(),
-          email: studentForm.email.trim(),
-          subjects: subjectsList,
-          active: true
-        };
-        setData(prev => ({
-          ...prev,
-          students: [...prev.students, newStudent]
-        }));
-        setStudentSelected(newId);
-        triggerToast('Record added to the centre system.');
+        try {
+          const created = await studentService.createStudent({
+            name: studentName,
+            year: Number(studentForm.year),
+            school: studentForm.school,
+            guardian: guardianName,
+            phone: phone,
+            email: studentForm.email?.trim() || null,
+            subjects: subjectsList
+          });
+
+          const createdId = studentService.formatStudentId(created.studentId);
+          const transformed = studentService.transformStudentProfileToUI(created, {
+            id: createdId,
+            backendId: created.studentId,
+            year: Number(studentForm.year),
+            school: studentForm.school?.trim(),
+            active: true
+          });
+
+          setData(prev => ({
+            ...prev,
+            students: [...prev.students, transformed]
+          }));
+          setStudentSelected(transformed.id);
+          triggerToast('Record added to the centre system.');
+          closeModal();
+          return;
+        } catch (err) {
+          setFormError(err.message || 'Failed to create student through API.');
+          return;
+        }
       }
     } else if (modalMode === 'tutor') {
       const fName = (tutorForm.firstName || '').trim();
@@ -840,12 +964,30 @@ export default function App() {
     return data.students.filter(s => {
       const matchesState = studentState === 'all' || (studentState === 'active' ? s.active : !s.active);
       const matchesQuery = !q ||
-        s.name.toLowerCase().includes(q) ||
-        s.guardian.toLowerCase().includes(q) ||
-        s.subjects.join(' ').toLowerCase().includes(q);
+        (s.name && s.name.toLowerCase().includes(q)) ||
+        (s.guardian && s.guardian.toLowerCase().includes(q)) ||
+        (Array.isArray(s.subjects) ? s.subjects.join(' ') : '').toLowerCase().includes(q);
       return matchesState && matchesQuery;
     });
   }, [data.students, studentState, studentSearch]);
+
+  // Handle direct student deactivation
+  const handleDeactivateStudent = async (id) => {
+    try {
+      const updated = await studentService.deactivateStudent(id);
+      setData(prev => ({
+        ...prev,
+        students: prev.students.map(s => (s.id === id || s.backendId === updated.studentId)
+          ? studentService.transformStudentProfileToUI(updated, { ...s, active: false })
+          : s
+        )
+      }));
+      triggerToast('Student deactivated.');
+    } catch (err) {
+      console.warn('Failed to deactivate student:', err.message);
+      triggerToast(err.message || 'Failed to deactivate student.');
+    }
+  };
 
   // Filtered tutors for Tutors page
   const filteredTutors = useMemo(() => {
@@ -1286,6 +1428,37 @@ export default function App() {
                   <button className="btn primary" onClick={() => openModal('student')}>＋ Add student</button>
                 </div>
 
+                {studentsError && (
+                  <div className="error-banner" style={{
+                    padding: '10px 14px',
+                    background: '#fdf2f2',
+                    border: '1px solid #f8b4b4',
+                    color: '#9b1c1c',
+                    borderRadius: 6,
+                    marginBottom: 16,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <span>{studentsError}</span>
+                    <button className="btn small" onClick={loadStudentsFromApi} style={{ marginLeft: 12 }}>
+                      Retry
+                    </button>
+                  </div>
+                )}
+                {studentsLoading && (
+                  <div className="loading-banner" style={{
+                    padding: '8px 12px',
+                    background: '#f0f4f8',
+                    borderRadius: 6,
+                    marginBottom: 14,
+                    fontSize: 13,
+                    color: '#334155'
+                  }}>
+                    Loading students from server...
+                  </div>
+                )}
+
                 <div className="toolbar">
                   <div className="search">
                     <input
@@ -1409,12 +1582,22 @@ export default function App() {
                         <div className="history">
                           <div className="inline-actions" style={{ justifyContent: 'space-between', marginBottom: 11 }}>
                             <div className="subhead" style={{ margin: 0 }}>Session history</div>
-                            <button
-                              className="btn small ghost"
-                              onClick={() => openModal('student', selectedStudentObj.id)}
-                            >
-                              Edit record
-                            </button>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              {selectedStudentObj.active && (
+                                <button
+                                  className="btn small ghost"
+                                  onClick={() => handleDeactivateStudent(selectedStudentObj.id)}
+                                >
+                                  Deactivate
+                                </button>
+                              )}
+                              <button
+                                className="btn small ghost"
+                                onClick={() => openModal('student', selectedStudentObj.id)}
+                              >
+                                Edit record
+                              </button>
+                            </div>
                           </div>
                           {studentHistory.length > 0 ? (
                             studentHistory.map(s => (
