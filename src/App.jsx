@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import DateRangePicker from './DateRangePicker';
+import SubjectMultiSelect from './SubjectMultiSelect';
 
 // Seed data based on Redgum Tutoring requirements
 const SEED_DATA = {
@@ -38,7 +39,7 @@ const SEED_DATA = {
   ]
 };
 
-const ALL_SUBJECTS = [
+export const ALL_SUBJECTS = [
   'Mathematics',
   'Maths Methods',
   'Specialist Mathematics',
@@ -209,7 +210,7 @@ export default function App() {
     guardian: '',
     phone: '',
     email: '',
-    subjects: '',
+    subjects: [],
     active: true
   });
 
@@ -238,30 +239,8 @@ export default function App() {
       return next;
     });
   };
-  const [isSubjectDropdownOpen, setIsSubjectDropdownOpen] = useState(false);
-  const [subjectSearchQuery, setSubjectSearchQuery] = useState('');
-  const [customSubjectInput, setCustomSubjectInput] = useState('');
-  const subjectDropdownRef = useRef(null);
-
-  // Close subject dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (subjectDropdownRef.current && !subjectDropdownRef.current.contains(event.target)) {
-        setIsSubjectDropdownOpen(false);
-      }
-    };
-
-    if (isSubjectDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('touchstart', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('touchstart', handleClickOutside);
-    };
-  }, [isSubjectDropdownOpen]);
-
   // Aggregate all unique subjects from catalog, tutors, students, and sessions
+  // Shared single source of truth for both Tutor and Student subject selection
   const allAvailableSubjects = useMemo(() => {
     const set = new Set(ALL_SUBJECTS);
     (data.tutors || []).forEach(t => (t.subjects || []).forEach(s => s && set.add(s.trim())));
@@ -269,55 +248,6 @@ export default function App() {
     (data.sessions || []).forEach(se => se.subject && set.add(se.subject.trim()));
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [data.tutors, data.students, data.sessions]);
-
-  // Filtered subjects based on search query inside dropdown
-  const displayedSubjects = useMemo(() => {
-    if (!subjectSearchQuery.trim()) return allAvailableSubjects;
-    const q = subjectSearchQuery.toLowerCase();
-    return allAvailableSubjects.filter(s => s.toLowerCase().includes(q));
-  }, [allAvailableSubjects, subjectSearchQuery]);
-
-  // Toggle selection of a subject in tutorForm
-  const toggleSubject = (subjectName) => {
-    setTutorForm(prev => {
-      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
-      if (current.includes(subjectName)) {
-        return { ...prev, subjects: current.filter(s => s !== subjectName) };
-      } else {
-        return { ...prev, subjects: [...current, subjectName] };
-      }
-    });
-  };
-
-  const selectAllFiltered = () => {
-    setTutorForm(prev => {
-      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
-      const combined = Array.from(new Set([...current, ...displayedSubjects]));
-      return { ...prev, subjects: combined };
-    });
-  };
-
-  const clearAllFiltered = () => {
-    setTutorForm(prev => {
-      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
-      const filtered = current.filter(s => !displayedSubjects.includes(s));
-      return { ...prev, subjects: filtered };
-    });
-  };
-
-  // Retained for when custom subject creation is re-enabled
-  const handleAddCustomSubject = () => {
-    const trimmed = customSubjectInput.trim();
-    if (!trimmed) return;
-    setTutorForm(prev => {
-      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
-      if (!current.includes(trimmed)) {
-        return { ...prev, subjects: [...current, trimmed] };
-      }
-      return prev;
-    });
-    setCustomSubjectInput('');
-  };
 
   const [availabilityForm, setAvailabilityForm] = useState({
     tutor: '',
@@ -420,14 +350,14 @@ export default function App() {
         const item = student(id);
         if (item) {
           setStudentForm({
-            name: item.name,
-            year: item.year,
-            school: item.school,
-            guardian: item.guardian,
-            phone: item.phone,
-            email: item.email,
-            subjects: item.subjects.join(', '),
-            active: item.active
+            name: item.name || '',
+            year: item.year || 10,
+            school: item.school || '',
+            guardian: item.guardian || '',
+            phone: item.phone || '',
+            email: item.email || '',
+            subjects: Array.isArray(item.subjects) ? [...item.subjects] : (item.subjects ? [item.subjects] : []),
+            active: item.active !== false
           });
         }
       } else {
@@ -438,14 +368,11 @@ export default function App() {
           guardian: '',
           phone: '',
           email: '',
-          subjects: '',
+          subjects: [],
           active: true
         });
       }
     } else if (mode === 'tutor') {
-      setIsSubjectDropdownOpen(false);
-      setSubjectSearchQuery('');
-      setCustomSubjectInput('');
       if (id) {
         const item = tutor(id);
         if (item) {
@@ -498,6 +425,16 @@ export default function App() {
     setEditId(null);
     setFormError('');
     setSessionForm(getInitialSessionForm());
+    setStudentForm({
+      name: '',
+      year: 10,
+      school: '',
+      guardian: '',
+      phone: '',
+      email: '',
+      subjects: [],
+      active: true
+    });
     setTutorForm({
       firstName: '',
       lastName: '',
@@ -508,9 +445,6 @@ export default function App() {
       cap: 8,
       active: true
     });
-    setIsSubjectDropdownOpen(false);
-    setSubjectSearchQuery('');
-    setCustomSubjectInput('');
   };
 
   // Submit modal form
@@ -567,7 +501,15 @@ export default function App() {
         triggerToast('Record added to the centre system.');
       }
     } else if (modalMode === 'student') {
-      const subjectsList = studentForm.subjects.split(',').map(s => s.trim()).filter(Boolean);
+      const subjectsList = Array.isArray(studentForm.subjects)
+        ? studentForm.subjects.map(s => s.trim()).filter(Boolean)
+        : (typeof studentForm.subjects === 'string' ? studentForm.subjects.split(',').map(s => s.trim()).filter(Boolean) : []);
+
+      if (subjectsList.length === 0) {
+        setFormError('Please select at least one subject for the student.');
+        return;
+      }
+
       if (editId) {
         setData(prev => ({
           ...prev,
@@ -575,7 +517,7 @@ export default function App() {
             ...s,
             name: studentForm.name.trim(),
             year: Number(studentForm.year),
-            school: studentForm.school.trim(),
+            school: (studentForm.school !== undefined ? studentForm.school : s.school || '').trim(),
             guardian: studentForm.guardian.trim(),
             phone: studentForm.phone.trim(),
             email: studentForm.email.trim(),
@@ -591,7 +533,7 @@ export default function App() {
           id: newId,
           name: studentForm.name.trim(),
           year: Number(studentForm.year),
-          school: studentForm.school.trim(),
+          school: '',
           guardian: studentForm.guardian.trim(),
           phone: studentForm.phone.trim(),
           email: studentForm.email.trim(),
@@ -1704,15 +1646,17 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="field full">
-                    <label htmlFor="f_school">School</label>
-                    <input
-                      id="f_school"
-                      type="text"
-                      value={studentForm.school}
-                      onChange={(e) => setStudentForm({ ...studentForm, school: e.target.value })}
-                    />
-                  </div>
+                  {editId && (
+                    <div className="field full">
+                      <label htmlFor="f_school">School</label>
+                      <input
+                        id="f_school"
+                        type="text"
+                        value={studentForm.school || ''}
+                        onChange={(e) => setStudentForm({ ...studentForm, school: e.target.value })}
+                      />
+                    </div>
+                  )}
 
                   <div className="field">
                     <label htmlFor="f_guardian">Family contact *</label>
@@ -1746,17 +1690,16 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="field full">
-                    <label htmlFor="f_subjects">Subjects *</label>
-                    <input
-                      id="f_subjects"
-                      type="text"
-                      placeholder="e.g. Mathematics, Chemistry (comma separated)"
-                      value={studentForm.subjects}
-                      onChange={(e) => setStudentForm({ ...studentForm, subjects: e.target.value })}
-                      required
-                    />
-                  </div>
+                  <SubjectMultiSelect
+                    idPrefix="f_student_subjects"
+                    label="Subjects *"
+                    labelId="label_student_subjects"
+                    selectedSubjects={studentForm.subjects}
+                    onChange={(subjects) => setStudentForm(prev => ({ ...prev, subjects }))}
+                    availableSubjects={allAvailableSubjects}
+                    placeholder="Select subjects..."
+                    modalOpen={modalOpen}
+                  />
 
                   {editId && (
                     <div className="field full">
@@ -1890,155 +1833,16 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="field full">
-                    <label id="label_tutor_subjects">Subjects *</label>
-                    <div className="subject-multiselect-container" ref={subjectDropdownRef}>
-                      <button
-                        type="button"
-                        id="f_tutor_subjects_btn"
-                        className={`subject-dropdown-btn ${isSubjectDropdownOpen ? 'open' : ''}`}
-                        onClick={() => setIsSubjectDropdownOpen(prev => !prev)}
-                        aria-expanded={isSubjectDropdownOpen}
-                        aria-haspopup="listbox"
-                        aria-labelledby="label_tutor_subjects"
-                      >
-                        <span className="dropdown-btn-label">
-                          <span className="dropdown-btn-icon">📚</span>
-                          {(!tutorForm.subjects || tutorForm.subjects.length === 0) ? (
-                            <span className="placeholder">Select teaching subjects...</span>
-                          ) : (
-                            <span className="selected-summary">
-                              <b>{tutorForm.subjects.length}</b> {tutorForm.subjects.length === 1 ? 'subject' : 'subjects'} selected
-                            </span>
-                          )}
-                        </span>
-                        <span className="dropdown-chevron">{isSubjectDropdownOpen ? '▲' : '▼'}</span>
-                      </button>
-
-                      {/* Dropdown Menu */}
-                      {isSubjectDropdownOpen && (
-                        <div className="subject-dropdown-menu" role="listbox" aria-multiselectable="true">
-                          <div className="subject-dropdown-header">
-                            <input
-                              type="text"
-                              className="subject-search-input"
-                              placeholder="Search subjects..."
-                              value={subjectSearchQuery}
-                              onChange={(e) => setSubjectSearchQuery(e.target.value)}
-                              autoFocus
-                            />
-                            <div className="subject-quick-actions">
-                              <span className="subject-counter">
-                                {displayedSubjects.length} subjects
-                              </span>
-                              <div className="subject-action-links">
-                                <button
-                                  type="button"
-                                  className="quick-action-btn"
-                                  onClick={selectAllFiltered}
-                                >
-                                  Select all
-                                </button>
-                                <span className="action-sep">·</span>
-                                <button
-                                  type="button"
-                                  className="quick-action-btn"
-                                  onClick={clearAllFiltered}
-                                >
-                                  Clear
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="subject-options-list">
-                            {displayedSubjects.map(sub => {
-                              const isSelected = Array.isArray(tutorForm.subjects) && tutorForm.subjects.includes(sub);
-                              return (
-                                <div
-                                  key={sub}
-                                  className={`subject-option-item ${isSelected ? 'selected' : ''}`}
-                                  onClick={() => toggleSubject(sub)}
-                                  role="option"
-                                  aria-selected={isSelected}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={() => {}}
-                                    tabIndex={-1}
-                                  />
-                                  <span className="subject-option-name">{sub}</span>
-                                  {isSelected && <span className="subject-check-icon">✓</span>}
-                                </div>
-                              );
-                            })}
-                            {displayedSubjects.length === 0 && (
-                              <div className="no-subjects-found">
-                                No subjects match "{subjectSearchQuery}"
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Temporarily disabled — custom subject creation will be enabled later.
-                          <div className="subject-dropdown-footer">
-                            <input
-                              type="text"
-                              className="custom-subject-input"
-                              placeholder="Add other subject..."
-                              value={customSubjectInput}
-                              onChange={(e) => setCustomSubjectInput(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleAddCustomSubject();
-                                }
-                              }}
-                            />
-                            <button
-                              type="button"
-                              className="btn small soft"
-                              onClick={handleAddCustomSubject}
-                              disabled={!customSubjectInput.trim()}
-                            >
-                              ＋ Add
-                            </button>
-                          </div>
-                          */}
-                        </div>
-                      )}
-
-                      {/* Selected Tags / Chips Display */}
-                      {Array.isArray(tutorForm.subjects) && tutorForm.subjects.length > 0 && (
-                        <div className="selected-subject-chips">
-                          {tutorForm.subjects.map(sub => (
-                            <span key={sub} className="subject-chip">
-                              <span>{sub}</span>
-                              <button
-                                type="button"
-                                className="chip-remove"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleSubject(sub);
-                                }}
-                                title={`Remove ${sub}`}
-                                aria-label={`Remove ${sub}`}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                          <button
-                            type="button"
-                            className="clear-all-chips-btn"
-                            onClick={() => setTutorForm(prev => ({ ...prev, subjects: [] }))}
-                          >
-                            Clear all
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <SubjectMultiSelect
+                    idPrefix="f_tutor_subjects"
+                    label="Subjects *"
+                    labelId="label_tutor_subjects"
+                    selectedSubjects={tutorForm.subjects}
+                    onChange={(subjects) => setTutorForm(prev => ({ ...prev, subjects }))}
+                    availableSubjects={allAvailableSubjects}
+                    placeholder="Select teaching subjects..."
+                    modalOpen={modalOpen}
+                  />
 
                   <div className="field">
                     <label htmlFor="f_cap">Maximum sessions per week</label>
