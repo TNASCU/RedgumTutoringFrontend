@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import DateRangePicker from './DateRangePicker';
 import SubjectMultiSelect from './SubjectMultiSelect';
+import * as tutorService from './services/tutorService';
 
 // Seed data based on Redgum Tutoring requirements
 const SEED_DATA = {
@@ -164,6 +165,48 @@ export default function App() {
   // Tutors View States
   const [tutorSearch, setTutorSearch] = useState('');
   const [tutorState, setTutorState] = useState('active'); // 'active' | 'all' | 'inactive'
+  const [tutorsLoading, setTutorsLoading] = useState(false);
+  const [tutorsError, setTutorsError] = useState(null);
+
+  // Load tutors from backend API: GET /api/Tutors
+  const loadTutorsFromApi = async () => {
+    setTutorsLoading(true);
+    setTutorsError(null);
+    try {
+      const apiTutors = await tutorService.getTutors();
+      if (Array.isArray(apiTutors) && apiTutors.length > 0) {
+        const tutorsWithDetails = await Promise.all(
+          apiTutors.map(async (item) => {
+            const existing = data.tutors.find(t => t.id === tutorService.formatTutorId(item.tutorId));
+            try {
+              const subs = await tutorService.getTutorSubjects(item.tutorId);
+              return tutorService.transformTutorListItemToUI(item, existing, subs);
+            } catch {
+              return tutorService.transformTutorListItemToUI(item, existing, null);
+            }
+          })
+        );
+        setData(prev => ({
+          ...prev,
+          tutors: tutorsWithDetails
+        }));
+      } else if (Array.isArray(apiTutors) && apiTutors.length === 0) {
+        setData(prev => ({
+          ...prev,
+          tutors: []
+        }));
+      }
+    } catch (err) {
+      console.warn('Unable to load tutors from API:', err.message);
+      setTutorsError(err.message || 'Unable to load tutors from the server. Please check backend API connection.');
+    } finally {
+      setTutorsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTutorsFromApi();
+  }, []);
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState('');
@@ -395,6 +438,22 @@ export default function App() {
             active: item.active !== false
           });
         }
+        // Connect to GET /api/Tutors/{id} to refresh profile and subjects
+        tutorService.getTutorById(id).then(profile => {
+          if (profile) {
+            const transformed = tutorService.transformTutorProfileToUI(profile, item);
+            setTutorForm(prev => ({
+              ...prev,
+              name: transformed.name || prev.name,
+              phone: transformed.phone || prev.phone,
+              subjects: transformed.subjects.length > 0 ? transformed.subjects : prev.subjects,
+              cap: transformed.cap || prev.cap,
+              active: transformed.active
+            }));
+          }
+        }).catch(err => {
+          console.warn('Could not refresh tutor from API:', err.message);
+        });
       } else {
         setTutorForm({
           firstName: '',
@@ -448,7 +507,7 @@ export default function App() {
   };
 
   // Submit modal form
-  const handleModalSubmit = (e) => {
+  const handleModalSubmit = async (e) => {
     e.preventDefault();
     setFormError('');
 
@@ -577,41 +636,82 @@ export default function App() {
       const finalName = displayName || tutorForm.name?.trim() || 'New Tutor';
 
       if (editId) {
-        setData(prev => ({
-          ...prev,
-          tutors: prev.tutors.map(t => t.id === editId ? {
-            ...t,
-            name: finalName,
+        try {
+          const subjectIds = tutorService.mapSubjectNamesToIds(subjectsList);
+          await tutorService.updateTutor(editId, {
+            tutorName: finalName,
+            phone: tutorForm.phone.trim(),
+            maxSessionsPw: Number(tutorForm.cap) || 8,
+            subjectIds: subjectIds.length > 0 ? subjectIds : [1],
+            notes: pName ? `Preferred Name: ${pName}` : null
+          });
+
+          // Deactivate tutor if toggled to inactive (Requirement E: PATCH /api/Tutors/{id}/deactivate)
+          if (!tutorForm.active) {
+            try {
+              await tutorService.deactivateTutor(editId);
+            } catch (deactErr) {
+              console.warn('Deactivate API returned:', deactErr.message);
+            }
+          }
+
+          setData(prev => ({
+            ...prev,
+            tutors: prev.tutors.map(t => t.id === editId ? {
+              ...t,
+              name: finalName,
+              firstName: fName,
+              lastName: lName,
+              preferredName: pName,
+              phone: tutorForm.phone.trim(),
+              subjects: subjectsList,
+              cap: Number(tutorForm.cap) || 8,
+              active: Boolean(tutorForm.active)
+            } : t)
+          }));
+          triggerToast('Changes saved.');
+          closeModal();
+          return;
+        } catch (err) {
+          setFormError(err.message || 'Failed to update tutor through API.');
+          return;
+        }
+      } else {
+        try {
+          const subjectIds = tutorService.mapSubjectNamesToIds(subjectsList);
+          const created = await tutorService.createTutor({
+            tutorName: finalName,
+            phone: tutorForm.phone.trim(),
+            maxSessionsPw: Number(tutorForm.cap) || 8,
+            subjectIds: subjectIds.length > 0 ? subjectIds : [1],
+            notes: pName ? `Preferred Name: ${pName}` : null
+          });
+
+          const createdId = tutorService.formatTutorId(created.tutorId);
+          const newTutor = {
+            id: createdId,
+            backendId: created.tutorId,
+            name: created.tutorName || finalName,
             firstName: fName,
             lastName: lName,
             preferredName: pName,
-            phone: tutorForm.phone.trim(),
+            phone: (created.phone || tutorForm.phone).trim(),
             subjects: subjectsList,
-            cap: Number(tutorForm.cap) || 8,
-            active: Boolean(tutorForm.active)
-          } : t)
-        }));
-        triggerToast('Changes saved.');
-      } else {
-        const maxNum = Math.max(0, ...data.tutors.map(t => Number(t.id.split('-')[1]) || 0));
-        const newId = 'T-' + String(maxNum + 1).padStart(3, '0');
-        const newTutor = {
-          id: newId,
-          name: finalName,
-          firstName: fName,
-          lastName: lName,
-          preferredName: pName,
-          phone: tutorForm.phone.trim(),
-          subjects: subjectsList,
-          cap: Number(tutorForm.cap) || 8,
-          active: true,
-          windows: []
-        };
-        setData(prev => ({
-          ...prev,
-          tutors: [...prev.tutors, newTutor]
-        }));
-        triggerToast('Record added to the centre system.');
+            cap: Number(created.maxSessionsPw || tutorForm.cap) || 8,
+            active: Boolean(created.isActive !== false),
+            windows: []
+          };
+          setData(prev => ({
+            ...prev,
+            tutors: [...prev.tutors, newTutor]
+          }));
+          triggerToast('Record added to the centre system.');
+          closeModal();
+          return;
+        } catch (err) {
+          setFormError(err.message || 'Failed to create tutor through API.');
+          return;
+        }
       }
     } else if (modalMode === 'availability') {
       if (mins(availabilityForm.end) <= mins(availabilityForm.start)) {
@@ -657,8 +757,8 @@ export default function App() {
     triggerToast(`Session marked ${newStatus.toLowerCase()}.`);
   };
 
-  // Navigate to Sessions tab with Tutor filtered
-  const showTutorSessions = (tutorId) => {
+  // Navigate to Sessions tab with Tutor filtered and fetch schedule from API
+  const showTutorSessions = async (tutorId) => {
     const t = tutor(tutorId);
     setCurrentPage('sessions');
     setSessionFilter('');
@@ -666,6 +766,42 @@ export default function App() {
     setAppliedDateRange({ from: '', to: '' });
     setFromDate('');
     setToDate('');
+
+    // Connect to GET /api/Tutors/{id}/schedule
+    try {
+      const schedule = await tutorService.getTutorSchedule(tutorId, '2026-09-21');
+      if (schedule && Array.isArray(schedule.days)) {
+        const fetchedSessions = [];
+        schedule.days.forEach(day => {
+          if (Array.isArray(day.sessions)) {
+            day.sessions.forEach(sess => {
+              fetchedSessions.push({
+                id: sess.sessionId,
+                date: sess.sessionDate,
+                time: String(sess.startTime).slice(0, 5),
+                duration: sess.duration,
+                student: 'S-' + String(sess.studentId).padStart(4, '0'),
+                tutor: tutorService.formatTutorId(sess.tutorId),
+                subject: tutorService.getSubjectNameById(sess.subjectId),
+                status: sess.status ? (sess.status.charAt(0).toUpperCase() + sess.status.slice(1).toLowerCase()) : 'Booked'
+              });
+            });
+          }
+        });
+        if (fetchedSessions.length > 0) {
+          setData(prev => {
+            const existingIds = new Set(fetchedSessions.map(s => s.id));
+            const remaining = prev.sessions.filter(s => !existingIds.has(s.id));
+            return {
+              ...prev,
+              sessions: [...remaining, ...fetchedSessions]
+            };
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch tutor schedule from API:', err.message);
+    }
   };
 
   // Filtered sessions for board
@@ -1317,6 +1453,37 @@ export default function App() {
                   </div>
                   <button className="btn primary" onClick={() => openModal('tutor')}>＋ Add tutor</button>
                 </div>
+
+                {tutorsError && (
+                  <div className="error-banner" style={{
+                    padding: '10px 14px',
+                    background: '#fdf2f2',
+                    border: '1px solid #f8b4b4',
+                    color: '#9b1c1c',
+                    borderRadius: 6,
+                    marginBottom: 16,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <span>{tutorsError}</span>
+                    <button className="btn small" onClick={loadTutorsFromApi} style={{ marginLeft: 12 }}>
+                      Retry
+                    </button>
+                  </div>
+                )}
+                {tutorsLoading && (
+                  <div className="loading-banner" style={{
+                    padding: '8px 12px',
+                    background: '#f0f4f8',
+                    borderRadius: 6,
+                    marginBottom: 14,
+                    fontSize: 13,
+                    color: '#334155'
+                  }}>
+                    Loading tutors from server...
+                  </div>
+                )}
 
                 <div className="toolbar">
                   <div className="search">
