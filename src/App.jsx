@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import DateRangePicker from './DateRangePicker';
 
 // Seed data based on Redgum Tutoring requirements
 const SEED_DATA = {
@@ -149,6 +150,10 @@ export default function App() {
   // Sessions View States
   const [sessionFilter, setSessionFilter] = useState('');
   const [sessionSearch, setSessionSearch] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [appliedDateRange, setAppliedDateRange] = useState({ from: '', to: '' });
 
   // Students View States
   const [studentSearch, setStudentSearch] = useState('');
@@ -715,6 +720,9 @@ export default function App() {
     setCurrentPage('sessions');
     setSessionFilter('');
     setSessionSearch(t?.name || '');
+    setAppliedDateRange({ from: '', to: '' });
+    setFromDate('');
+    setToDate('');
   };
 
   // Filtered sessions for board
@@ -736,14 +744,16 @@ export default function App() {
     return data.sessions
       .filter(s => {
         const matchesStatus = !sessionFilter || s.status === sessionFilter;
+        const matchesDate = (!appliedDateRange.from || s.date >= appliedDateRange.from) &&
+                            (!appliedDateRange.to || s.date <= appliedDateRange.to);
         const studentName = student(s.student)?.name?.toLowerCase() || '';
         const tutorName = tutor(s.tutor)?.name?.toLowerCase() || '';
         const subjectName = s.subject?.toLowerCase() || '';
         const matchesQuery = !q || studentName.includes(q) || tutorName.includes(q) || subjectName.includes(q);
-        return matchesStatus && matchesQuery;
+        return matchesStatus && matchesDate && matchesQuery;
       })
       .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
-  }, [data.sessions, sessionFilter, sessionSearch]);
+  }, [data.sessions, sessionFilter, sessionSearch, appliedDateRange]);
 
   // Filtered students for Students page
   const filteredStudents = useMemo(() => {
@@ -1084,6 +1094,21 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+
+                  <DateRangePicker
+                    fromDate={fromDate}
+                    setFromDate={setFromDate}
+                    toDate={toDate}
+                    setToDate={setToDate}
+                    datePickerOpen={datePickerOpen}
+                    setDatePickerOpen={setDatePickerOpen}
+                    appliedDateRange={appliedDateRange}
+                    setAppliedDateRange={setAppliedDateRange}
+                    sessions={data.sessions}
+                    fmtDate={fmtDate}
+                    localDate={localDate}
+                    triggerToast={triggerToast}
+                  />
 
                   <div className="search">
                     <input
