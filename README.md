@@ -6,86 +6,103 @@
 **Client / Owner:** Helen Vasquez  
 **Unit:** Southern Cross University (SCU) · Master of Information Technology
 
-## Run locally
+---
 
-Start the ASP.NET Core API on port 5000, then run:
+## 🌟 Overview
 
-```sh
+This is the React frontend implementation for the **Redgum Tutoring Scheduling System**, faithfully translated from the prototype HTML/CSS mockup. It provides a complete, modern, reactive interface with local persistence, business rule enforcement (availability validation), and full interactive state management.
+
+### Key Features Implemented:
+1. **Weekly & Daily Schedule (Whiteboard View)**
+   - Weekly board showing Tuesday to Saturday columns (matching centre operating hours).
+   - Day-view navigation with dedicated date picker.
+   - Interactive HTML5 drag-and-drop session card movement between days.
+   - Live availability verification on drop: automatically prevents scheduling conflicts outside tutor availability.
+   - Density toggle (Detailed / Minimal) and real-time search/filtering by student or tutor.
+   - Print-friendly layout (`Print week`).
+
+2. **All Sessions Management**
+   - Summary statistics cards (Booked, Attended, Cancelled, Missed).
+   - Filter by status pill tabs and live search query.
+   - Quick one-click status transitions (`Attended`, `Cancelled`).
+   - Detailed session edit dialog.
+
+3. **Student Directory & History**
+   - Split panel layout: Student table and comprehensive details view.
+   - Displays student year level, active status, family contact, and subjects.
+   - Dedicated session history tracking past and upcoming sessions for the selected student.
+   - Add/edit student modal with automatic ID assignment (`S-0xxx`).
+
+4. **Tutor Directory & Capacity**
+   - Grid cards displaying tutor name, phone, teaching subjects, and active status.
+   - Visual weekly capacity progress bar and load indicator (e.g. `3 / 8` sessions).
+   - "Upcoming sessions" quick shortcut filtering directly to that tutor's bookings.
+   - Add/edit tutor modal with automatic ID assignment (`T-0xx`).
+
+5. **Tutor Availability Management**
+   - Centre-wide availability grid across all operating days (Tuesday–Saturday).
+   - Visual time windows (e.g., `15:30–19:00`) per tutor.
+   - Quick delete action (`×`) to remove availability windows.
+   - "Add availability" modal with validation (`end time > start time`).
+
+6. **Interactive Modals & Toast Notifications**
+   - Unified modal dialog for Sessions, Students, Tutors, and Availability.
+   - Form-level error alerts enforcing the tutor availability validation rule.
+   - Animated bottom-center toast feedback for all actions.
+   - Responsive design with mobile bottom navigation bar.
+
+---
+
+## 🚀 Running the Project Locally
+
+```bash
+# 1. Install dependencies (React + Vite)
 npm install
+
+# 2. Start the local development server
 npm run dev
 ```
 
-Development requests use /api through the Vite proxy. To override the backend,
-copy .env.example to .env.local and set VITE_API_BASE_URL, including the /api prefix.
-Restart Vite after changing it. Set this URL when building for deployment.
+The app will be running at `http://localhost:5173/`.
 
-## Integrated functionality
-
-- Weekly/day schedules, booking creation, session details/editing and copy-week-forward retain preprod's API integration.
-- Bookings are edited through their session form; schedule cards do not support drag-and-drop.
-- A shared loading screen appears during service calls and closes when all pending requests complete, fail or are cancelled.
-- All sessions loads server records, supports status/search filters and an inclusive date range. This week/month presets use the current local date. Clearing the range requests all records again.
-- Attended, missed and cancelled actions use PATCH /Sessions/{id}/status and refresh server data after success.
-- Student list, profile, create, update and deactivate use /Students endpoints. Student history loads independently from the sessions-page filter.
-- Student/tutor subject selectors search and select real database IDs, showing class labels to distinguish subjects with the same name. Options come from backend student/tutor profiles, with no guessed or hardcoded IDs.
-- No seeded records or localStorage fallback is used for server-owned data. Loading, empty and error states are explicit, and requests are cancelled when their view changes.
-
-## Backend compatibility and data preservation
-
-The domain services use the existing shared apiClient, configuration and ApiError
-handling. Paths are relative to the API root. Request options accept AbortController
-signals, and failures retain backend validation details.
-
-Student history uses GET /Sessions/student/{id}/history when available (the local
-StudentEpic backend provides it). On older preprod deployments returning 404 for
-that route, it uses GET /Sessions and filters by student ID. Other failures remain
-visible and retryable.
-
-Student inputs match the backend DTO: name, guardians, media consent, first aid
-needed, share progress, availability notes, notes and subject IDs. Names/emails
-allow 100 characters, guardian phone 12, relationship 20, and availability notes
-255. Guardian name/phone/relationship are required for every guardian, with at
-least one guardian. The first visible guardian is always sent first and becomes
-primary on the backend. Users can add/remove guardians or move a guardian to first
-position with Make primary. Existing guardian IDs are retained; new ones omit IDs.
-
-Nullable flags support Yes, No and Not specified. New-student defaults match the
-backend (media consent false, first aid needed true, share progress false).
-School/year inputs are removed because they are not backend fields. Existing Notes
-are preserved as free text, including any older school/year lines. Deactivation
-uses its separate endpoint; a failed deactivation after a successful profile save
-is reported and remains retryable with refreshed guardian IDs.
-
-Tutor availability can be added and removed through POST /Tutors/{id}/availability
-and DELETE /Tutors/{id}/availability/{availabilityId}. Times use HH:mm:ss and ISO
-weekday numbers. Invalid time ranges are checked in the form; overlap validation
-comes from the backend. The grid refreshes after successful writes and retains
-slots when deletion fails. Reactivation is not offered for inactive students or tutors. Subject
-options are limited to subjects returned by existing profiles because there is no
-standalone subject-catalog endpoint.
-
-## Validation
-
-```sh
-npm test
-npm run lint
+### Building for Production
+```bash
 npm run build
 ```
 
-The Node tests cover request contracts, date filtering, history compatibility,
-status updates, concurrent request loading, student profile preservation, validation
-errors, cancellation and date presets across year/leap-month boundaries.
+---
 
-Optional browser smoke tests require the chrome-devtools CLI, a browser page and a
-running Vite server. On Windows:
+## 📁 File Structure
 
-```sh
-chrome-devtools list_pages
-node tests/browser-smoke.cjs http://127.0.0.1:5174/ 1
-```
+- `src/App.jsx` - Primary React component containing the complete UI, state management, and availability logic.
+- `src/index.css` - Custom design system tokens, typography, layouts, and responsive breakpoints.
+- `src/main.jsx` - React entry point mounting to `#root`.
+- `index.html` - HTML shell with typography and metadata.
 
-The smoke suite injects tests/fixtures/browser.js before app startup. Every /api
-request is intercepted in memory; real tutoring records are not changed. It checks
-rendered screens, date selection, student create/edit/deactivate, tutor subject IDs,
-failed-save retries, status changes, loading, booking edits and copy-week feedback.
-The fixture is never imported into the production application.
+## API service foundation
+
+The shared client lives in `src/services/apiClient.js` and uses native `fetch`.
+No additional dependencies are required. The UI still uses its existing local data;
+the schedule now loads Tuesday-to-Saturday sessions from the backend. Other pages still use local data.
+
+Development requests use `/api`, proxied by Vite to `http://localhost:5000/api`. To override it, copy
+`.env.example` to `.env.local`, update `VITE_API_BASE_URL`, and restart Vite.
+Use `/api` for the local proxy or an absolute backend URL including the `/api` prefix. Vite exposes `VITE_` variables
+in the browser bundle, so they must not contain secrets. Set the deployed backend
+URL when building for production.
+
+Future domain services should import `apiClient` from `src/services/index.js`
+and pass paths relative to the API root (without repeating `/api`). The client
+provides `get(path, options)`, `delete(path, options)`, and
+`post/put/patch(path, body, options)`. Options support `query`, `headers`, and
+an AbortController `signal`. Query arrays become repeated parameters; null and
+undefined values are omitted. Bodies are JSON by default; FormData is also supported.
+
+Successful responses return parsed JSON, text, or `null` for an empty body.
+`ApiError` exposes `status` and `data`, preserving server validation details.
+Network errors have status `0`; cancellation retains the original abort error.
+Authentication can be configured once the backend's authentication contract is known.
+
+When using an absolute backend URL instead of the development proxy, configure backend CORS
+to allow the frontend's origin (normally `http://localhost:5173`) and the required
+HTTP methods and headers, including `Content-Type`.
