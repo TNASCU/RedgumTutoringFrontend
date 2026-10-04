@@ -1,7 +1,16 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { getWeekSchedule, copyWeekForward, getSession, createSession, updateSession, sessionValidationErrors } from './services/sessionsService.js';
 import { startOfWeek } from './services/scheduleDates.js';
-import { getTutors, getTutorSubjects } from './services/tutorsService.js';
+import {
+  createTutor,
+  deactivateTutor,
+  getTutorDirectory,
+  getTutorSchedule,
+  getTutors,
+  getTutorSubjects,
+  tutorValidationErrors,
+  updateTutor,
+} from './services/tutorsService.js';
 import { getStudents } from './services/studentsService.js';
 
 // Seed data based on Redgum Tutoring requirements
@@ -59,6 +68,16 @@ const ALL_SUBJECTS = [
   'Psychology',
   'Science (Junior)'
 ];
+
+const TUTOR_DAY_NAMES = {
+  1: 'Monday',
+  2: 'Tuesday',
+  3: 'Wednesday',
+  4: 'Thursday',
+  5: 'Friday',
+  6: 'Saturday',
+  7: 'Sunday'
+};
 
 // Date & Time utility functions
 function initials(name) {
@@ -204,6 +223,85 @@ export default function App() {
   // Tutors View States
   const [tutorSearch, setTutorSearch] = useState('');
   const [tutorState, setTutorState] = useState('active'); // 'active' | 'all' | 'inactive'
+  const [tutorDirectory, setTutorDirectory] = useState({ items: [], loading: true, error: '' });
+  const [tutorSubjectCatalog, setTutorSubjectCatalog] = useState([]);
+  const [tutorCapacity, setTutorCapacity] = useState({});
+  const [tutorRefresh, setTutorRefresh] = useState(0);
+  const [tutorSaving, setTutorSaving] = useState(false);
+  const tutorSavingRef = useRef(false);
+
+  useEffect(() => {
+    if (currentPage !== 'tutors' && currentPage !== 'availability') return;
+    const controller = new AbortController();
+
+    const loadTutorArea = async () => {
+      try {
+        const tutors = await getTutorDirectory({ signal: controller.signal });
+        if (controller.signal.aborted) return;
+
+        const normalizedTutors = tutors.map(tutorItem => ({
+          id: tutorItem.tutorId,
+          name: tutorItem.tutorName,
+          phone: tutorItem.phone ?? '',
+          subjects: (tutorItem.subjects ?? []).map(subject => subject.subjectName),
+          subjectIds: (tutorItem.subjects ?? []).map(subject => subject.subjectId),
+          active: tutorItem.isActive,
+          cap: tutorItem.maxSessionsPw,
+          unavailabilityNotes: tutorItem.unavailabilityNotes ?? '',
+          notes: tutorItem.notes ?? '',
+          windows: (tutorItem.availability ?? []).map(slot => [
+            TUTOR_DAY_NAMES[slot.dayOfWeek],
+            slot.startTime.slice(0, 5),
+            slot.endTime.slice(0, 5),
+            slot.tutorAvailabilityId
+          ])
+        }));
+        setTutorDirectory({ items: normalizedTutors, loading: false, error: '' });
+
+        let students = [];
+        try {
+          students = await getStudents({ signal: controller.signal });
+        } catch (error) {
+          if (controller.signal.aborted || error.name === 'AbortError') return;
+        }
+
+        const subjectsById = new Map();
+        for (const subject of tutors.flatMap(tutorItem => tutorItem.subjects ?? [])) {
+          subjectsById.set(subject.subjectId, subject);
+        }
+        for (const subject of students.flatMap(studentItem => studentItem.subjects ?? [])) {
+          subjectsById.set(subject.subjectId, subject);
+        }
+        setTutorSubjectCatalog([...subjectsById.values()].sort((a, b) =>
+          a.subjectName.localeCompare(b.subjectName) || (a.subjectClass ?? '').localeCompare(b.subjectClass ?? '')
+        ));
+
+        const monday = iso(startOfWeek(new Date()));
+        const scheduleResults = await Promise.allSettled(tutors.map(tutorItem =>
+          getTutorSchedule(tutorItem.tutorId, monday, { signal: controller.signal })
+        ));
+        if (controller.signal.aborted) return;
+        const capacity = {};
+        scheduleResults.forEach((result, index) => {
+          const tutorId = tutors[index].tutorId;
+          capacity[tutorId] = result.status === 'fulfilled'
+            ? result.value.days.flatMap(day => day.sessions ?? [])
+                .filter(session => session.status?.toLowerCase() === 'booked').length
+            : null;
+        });
+        setTutorCapacity(capacity);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setTutorDirectory({ items: [], loading: false, error: error.message });
+          setTutorSubjectCatalog([]);
+          setTutorCapacity({});
+        }
+      }
+    };
+
+    loadTutorArea();
+    return () => controller.abort();
+  }, [currentPage, tutorRefresh]);
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState('');
@@ -383,11 +481,12 @@ export default function App() {
   // Aggregate all unique subjects from catalog, tutors, students, and sessions
   const allAvailableSubjects = useMemo(() => {
     const set = new Set(ALL_SUBJECTS);
+    tutorSubjectCatalog.forEach(subject => subject.subjectName && set.add(subject.subjectName.trim()));
     (data.tutors || []).forEach(t => (t.subjects || []).forEach(s => s && set.add(s.trim())));
     (data.students || []).forEach(st => (st.subjects || []).forEach(s => s && set.add(s.trim())));
     (data.sessions || []).forEach(se => se.subject && set.add(se.subject.trim()));
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [data.tutors, data.students, data.sessions]);
+  }, [tutorSubjectCatalog, data.tutors, data.students, data.sessions]);
 
   // Filtered subjects based on search query inside dropdown
   const displayedSubjects = useMemo(() => {
@@ -446,7 +545,8 @@ export default function App() {
 
   // Entity lookup helpers
   const student = (id) => data.students.find(x => x.id === id);
-  const tutor = (id) => data.tutors.find(x => x.id === id);
+  const tutor = (id) => tutorDirectory.items.find(x => String(x.id) === String(id))
+    || data.tutors.find(x => String(x.id) === String(id));
 
   // Week dates calculator (Tuesday through Saturday: +1 to +5 days from weekStart Monday)
   const weekDates = useMemo(() => {
@@ -576,7 +676,7 @@ export default function App() {
   };
 
   const closeModal = () => {
-    if (sessionSavingRef.current) return;
+    if (sessionSavingRef.current || tutorSavingRef.current) return;
     setModalOpen(false);
     setEditId(null);
     setFormError('');
@@ -674,6 +774,7 @@ export default function App() {
         triggerToast('Record added to the centre system.');
       }
     } else if (modalMode === 'tutor') {
+      if (tutorSavingRef.current) return;
       const fName = (tutorForm.firstName || '').trim();
       const lName = (tutorForm.lastName || '').trim();
       const pName = (tutorForm.preferredName || '').trim();
@@ -702,43 +803,61 @@ export default function App() {
         : fullLegalName;
       const finalName = displayName || tutorForm.name?.trim() || 'New Tutor';
 
-      if (editId) {
-        setData(prev => ({
-          ...prev,
-          tutors: prev.tutors.map(t => t.id === editId ? {
-            ...t,
-            name: finalName,
-            firstName: fName,
-            lastName: lName,
-            preferredName: pName,
-            phone: tutorForm.phone.trim(),
-            subjects: subjectsList,
-            cap: Number(tutorForm.cap) || 8,
-            active: Boolean(tutorForm.active)
-          } : t)
-        }));
-        triggerToast('Changes saved.');
-      } else {
-        const maxNum = Math.max(0, ...data.tutors.map(t => Number(t.id.split('-')[1]) || 0));
-        const newId = 'T-' + String(maxNum + 1).padStart(3, '0');
-        const newTutor = {
-          id: newId,
-          name: finalName,
-          firstName: fName,
-          lastName: lName,
-          preferredName: pName,
-          phone: tutorForm.phone.trim(),
-          subjects: subjectsList,
-          cap: Number(tutorForm.cap) || 8,
-          active: true,
-          windows: []
-        };
-        setData(prev => ({
-          ...prev,
-          tutors: [...prev.tutors, newTutor]
-        }));
-        triggerToast('Record added to the centre system.');
+      const originalTutor = editId
+        ? tutorDirectory.items.find(item => String(item.id) === String(editId))
+        : null;
+      if (originalTutor && !originalTutor.active && tutorForm.active) {
+        setFormError('Inactive tutors cannot be reactivated because the backend does not provide a reactivation endpoint.');
+        return;
       }
+
+      const subjectIdByName = new Map();
+      tutorSubjectCatalog.forEach(subject => {
+        if (!subjectIdByName.has(subject.subjectName)) {
+          subjectIdByName.set(subject.subjectName, subject.subjectId);
+        }
+      });
+      originalTutor?.subjects.forEach((subjectName, index) => {
+        subjectIdByName.set(subjectName, originalTutor.subjectIds[index]);
+      });
+      const missingSubjects = subjectsList.filter(subjectName => !subjectIdByName.has(subjectName));
+      if (missingSubjects.length > 0) {
+        setFormError(`These subjects are not available in the backend: ${missingSubjects.join(', ')}.`);
+        return;
+      }
+
+      const payload = {
+        tutorName: finalName,
+        phone: tutorForm.phone.trim(),
+        maxSessionsPw: Number(tutorForm.cap) || 8,
+        subjectIds: [...new Set(subjectsList.map(subjectName => subjectIdByName.get(subjectName)))],
+        unavailabilityNotes: originalTutor?.unavailabilityNotes || '',
+        notes: originalTutor?.notes || ''
+      };
+
+      tutorSavingRef.current = true;
+      setTutorSaving(true);
+      try {
+        if (editId) {
+          await updateTutor(editId, payload);
+          if (originalTutor?.active && !tutorForm.active) {
+            await deactivateTutor(editId);
+          }
+        } else {
+          await createTutor(payload);
+        }
+        setTutorRefresh(value => value + 1);
+        triggerToast(editId ? 'Changes saved.' : 'Record added to the centre system.');
+      } catch (error) {
+        const messages = tutorValidationErrors(error);
+        setFormError(messages.length ? messages.join(' ') : error.message);
+        return;
+      } finally {
+        tutorSavingRef.current = false;
+        setTutorSaving(false);
+      }
+      closeModal();
+      return;
     } else if (modalMode === 'availability') {
       if (mins(availabilityForm.end) <= mins(availabilityForm.start)) {
         setFormError('The finish time must be later than the start time.');
@@ -785,10 +904,11 @@ export default function App() {
 
   // Navigate to Sessions tab with Tutor filtered
   const showTutorSessions = (tutorId) => {
-    const t = tutor(tutorId);
-    setCurrentPage('sessions');
-    setSessionFilter('');
-    setSessionSearch(t?.name || '');
+    setCurrentPage('schedule');
+    setWeekStart(startOfWeek(new Date()));
+    setScheduleMode('week');
+    setBoardTutor(String(tutorId));
+    setBoardSearch('');
   };
 
   // Filtered sessions for board
@@ -835,17 +955,20 @@ export default function App() {
   // Filtered tutors for Tutors page
   const filteredTutors = useMemo(() => {
     const q = tutorSearch.toLowerCase();
-    return data.tutors.filter(t => {
+    return tutorDirectory.items.filter(t => {
       const matchesState = tutorState === 'all' || (tutorState === 'active' ? t.active : !t.active);
       const matchesQuery = !q ||
         t.name.toLowerCase().includes(q) ||
         (Array.isArray(t.subjects) ? t.subjects : []).join(' ').toLowerCase().includes(q);
       return matchesState && matchesQuery;
     });
-  }, [data.tutors, tutorState, tutorSearch]);
+  }, [tutorDirectory.items, tutorState, tutorSearch]);
 
-  const activeTutors = useMemo(() => data.tutors.filter(t => t.active), [data.tutors]);
+  const activeTutors = useMemo(() => tutorDirectory.items.filter(t => t.active), [tutorDirectory.items]);
   const activeStudents = useMemo(() => data.students.filter(s => s.active), [data.students]);
+  const editingTutor = modalMode === 'tutor' && editId
+    ? tutorDirectory.items.find(item => String(item.id) === String(editId))
+    : null;
 
   // Selected student details & history
   const selectedStudentObj = student(studentSelected) || filteredStudents[0] || null;
@@ -1411,7 +1534,7 @@ export default function App() {
               <section className="page active" id="page-tutors">
                 <div className="page-head">
                   <div>
-                    <div className="eyebrow">{data.tutors.length} tutors · centre-wide</div>
+                    <div className="eyebrow">{tutorDirectory.items.length} tutors · centre-wide</div>
                     <h1>Tutors</h1>
                     <p>Teaching subjects, weekly capacity, upcoming sessions, and active status.</p>
                   </div>
@@ -1439,11 +1562,18 @@ export default function App() {
                 </div>
 
                 <div className="tutor-grid">
-                  {filteredTutors.length > 0 ? (
+                  {tutorDirectory.loading ? (
+                    <div className="empty" role="status">Loading tutors...</div>
+                  ) : tutorDirectory.error ? (
+                    <div className="empty" role="alert">
+                      <p>{tutorDirectory.error}</p>
+                      <button className="btn small" onClick={() => { setTutorDirectory(previous => ({ ...previous, loading: true, error: '' })); setTutorRefresh(value => value + 1); }}>Retry</button>
+                    </div>
+                  ) : filteredTutors.length > 0 ? (
                     filteredTutors.map(x => {
-                      const booked = data.sessions.filter(s => s.tutor === x.id && s.status === 'Booked').length;
+                      const booked = tutorCapacity[x.id];
                       const cap = x.cap || 8;
-                      const pct = Math.min(100, Math.round((booked / cap) * 100));
+                      const pct = booked == null ? 0 : Math.min(100, Math.round((booked / cap) * 100));
 
                       return (
                         <article key={x.id} className="tutor-card">
@@ -1460,7 +1590,7 @@ export default function App() {
                           </p>
                           <div className="capacity-row">
                             <span>Upcoming load</span>
-                            <span>{booked} / {cap}</span>
+                            <span>{booked == null ? 'Unavailable' : booked} / {cap}</span>
                           </div>
                           <div className="capacity">
                             <i style={{ width: `${pct}%` }}></i>
@@ -1498,15 +1628,24 @@ export default function App() {
                     <h1>Tutor availability</h1>
                     <p>Bookings must start and finish inside one of these windows.</p>
                   </div>
-                  <button className="btn primary" onClick={() => openModal('availability')}>＋ Add availability</button>
+                  <button className="btn primary" disabled title="Availability changes are not supported by the backend API.">＋ Add availability</button>
                 </div>
 
                 <div className="notice">
                   <b>Rule:</b>
                   <span>The system checks the tutor, day, start time, and full session length before saving or moving any booking. Invalid bookings are refused with a reason.</span>
+                  <span>Availability is read-only because the backend does not provide add or remove endpoints.</span>
                 </div>
 
-                <div className="availability-grid">
+                {tutorDirectory.loading ? (
+                  <div className="empty" role="status">Loading tutor availability...</div>
+                ) : tutorDirectory.error ? (
+                  <div className="empty" role="alert">
+                    <p>{tutorDirectory.error}</p>
+                    <button className="btn small" onClick={() => { setTutorDirectory(previous => ({ ...previous, loading: true, error: '' })); setTutorRefresh(value => value + 1); }}>Retry</button>
+                  </div>
+                ) : (
+                  <div className="availability-grid">
                   <div className="grid-head">Tutor</div>
                   {['Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(day => (
                     <div key={day} className="grid-head">{day}</div>
@@ -1528,6 +1667,8 @@ export default function App() {
                                   <span>{w[1]}–{w[2]}</span>
                                   <button
                                     aria-label="Remove availability"
+                                    disabled
+                                    title="Availability changes are not supported by the backend API."
                                     onClick={() => handleRemoveWindow(t.id, day, index)}
                                   >
                                     ×
@@ -1542,7 +1683,8 @@ export default function App() {
                       })}
                     </React.Fragment>
                   ))}
-                </div>
+                  </div>
+                )}
               </section>
             )}
           </section>
@@ -1633,7 +1775,7 @@ export default function App() {
             {modalMode === 'session' && editId && sessionDetails.loading && <p role="status">Loading session details...</p>}
             {modalMode === 'session' && editId && sessionDetails.error && <div role="alert">{sessionDetails.error}<button type="button" className="btn" onClick={() => { setSessionDetails({ loading: true, error: '' }); setDetailsRetry(value => value + 1); }}>Retry</button></div>}
             {modalMode === 'session' && editId && !sessionDetails.loading && !sessionDetails.error && <p>Session #{editId}. {sessionEditMode ? 'Update the details and save your changes.' : 'Select Edit to change this session.'}</p>}
-            <fieldset disabled={sessionSaving || (modalMode === 'session' && Boolean(editId) && (!sessionEditMode || sessionDetails.loading || Boolean(sessionDetails.error)))} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+            <fieldset disabled={sessionSaving || tutorSaving || (modalMode === 'session' && Boolean(editId) && (!sessionEditMode || sessionDetails.loading || Boolean(sessionDetails.error)))} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="form-grid">
               {/* Session Modal Fields */}
               {modalMode === 'session' && (
@@ -2122,7 +2264,7 @@ export default function App() {
                         value={tutorForm.active ? 'true' : 'false'}
                         onChange={(e) => setTutorForm({ ...tutorForm, active: e.target.value === 'true' })}
                       >
-                        <option value="true">Active</option>
+                        <option value="true" disabled={Boolean(editingTutor && !editingTutor.active)}>Active</option>
                         <option value="false">Inactive</option>
                       </select>
                     </div>
@@ -2195,14 +2337,14 @@ export default function App() {
             )}
 
             <div className="modal-actions">
-              <button type="button" className="btn" onClick={closeModal}>Cancel</button>
+              <button type="button" className="btn" disabled={sessionSaving || tutorSaving} onClick={closeModal}>Cancel</button>
               {modalMode === 'session' && editId && !sessionEditMode ? (
                 <button type="button" className="btn primary" disabled={sessionDetails.loading || Boolean(sessionDetails.error) || !bookingStudents.ready || !bookingTutors.ready || subjectsLoading || Boolean(bookingStudents.error || bookingTutors.error || bookingSubjects.error)} onClick={() => { setFormError(''); setSessionErrors([]); setSessionEditMode(true); }}>Edit</button>
               ) : (
                 <>
                   {modalMode === 'session' && editId && <button type="button" className="btn" disabled={sessionSaving} onClick={() => { setSessionForm({ ...savedSessionForm.current }); setSessionEditMode(false); setFormError(''); setSessionErrors([]); }}>Cancel editing</button>}
-                  <button type="submit" className="btn primary" disabled={sessionSaving || (modalMode === 'session' && (!sessionForm.subjectId || subjectsLoading || !bookingStudents.ready || !bookingTutors.ready || Boolean(bookingStudents.error || bookingTutors.error || bookingSubjects.error)))}>
-                    {sessionSaving ? 'Saving...' : editId ? 'Save changes' : 'Add ' + modalMode}
+                  <button type="submit" className="btn primary" disabled={sessionSaving || tutorSaving || (modalMode === 'session' && (!sessionForm.subjectId || subjectsLoading || !bookingStudents.ready || !bookingTutors.ready || Boolean(bookingStudents.error || bookingTutors.error || bookingSubjects.error)))}>
+                    {sessionSaving || tutorSaving ? 'Saving...' : editId ? 'Save changes' : 'Add ' + modalMode}
                   </button>
                 </>
               )}
