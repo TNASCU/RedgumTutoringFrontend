@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { getWeekSchedule, copyWeekForward, getSession, createSession, updateSession, sessionValidationErrors } from './services/sessionsService.js';
+import { getWeekSchedule, copyWeekForward, getSession, createSession, updateSession, sessionValidationErrors, getSessions, getStudentHistory, updateSessionStatus } from './services/sessionsService.js';
 import { startOfWeek } from './services/scheduleDates.js';
 import {
+  addTutorAvailability,
+  removeTutorAvailability,
   createTutor,
   deactivateTutor,
   getTutorDirectory,
@@ -11,63 +13,11 @@ import {
   tutorValidationErrors,
   updateTutor,
 } from './services/tutorsService.js';
-import { getStudents } from './services/studentsService.js';
-
-// Seed data based on Redgum Tutoring requirements
-const SEED_DATA = {
-  students: [
-    { id: 'S-0287', name: 'Ella Nguyen', year: 11, school: 'Ipswich State High School', guardian: 'Minh Nguyen', phone: '0412 530 184', email: 'minh.nguyen@example.com', subjects: ['Physics'], active: true },
-    { id: 'S-0294', name: 'Jayden Pike', year: 10, school: 'St Edmund’s College', guardian: 'Kara Pike', phone: '0438 114 520', email: 'kara.pike@example.com', subjects: ['Mathematics'], active: true },
-    { id: 'S-0302', name: 'Sara Habib', year: 12, school: 'Bremer State High School', guardian: 'Nadia Habib', phone: '0402 771 305', email: 'nadia.habib@example.com', subjects: ['Chemistry'], active: true },
-    { id: 'S-0305', name: 'Oliver Brandt', year: 9, school: 'Ipswich Grammar School', guardian: 'Rachel Brandt', phone: '0421 680 944', email: 'r.brandt@example.com', subjects: ['Mathematics'], active: true },
-    { id: 'S-0308', name: 'Mia Okafor', year: 12, school: 'St Mary’s College', guardian: 'Adaeze Okafor', phone: '0408 214 667', email: 'adaeze.o@example.com', subjects: ['Maths Methods'], active: true },
-    { id: 'S-0311', name: 'Kai Lombardo', year: 11, school: 'Willowbank State High School', guardian: 'Gina Lombardo', phone: '0418 330 297', email: 'g.lombardo@example.com', subjects: ['Physics', 'Maths Methods'], active: true },
-    { id: 'S-0251', name: 'Noah Chen', year: 8, school: 'St Peter Claver College', guardian: 'Jo Chen', phone: '0415 220 971', email: 'jo.chen@example.com', subjects: ['Mathematics'], active: false }
-  ],
-  tutors: [
-    { id: 'T-001', name: 'Helen Vasquez', firstName: 'Helen', lastName: 'Vasquez', preferredName: '', phone: '0411 800 221', subjects: ['Mathematics', 'Maths Methods'], active: true, cap: 12, windows: [['Tuesday', '15:00', '20:00'], ['Wednesday', '15:00', '20:00'], ['Thursday', '15:00', '20:00'], ['Friday', '15:00', '20:00'], ['Saturday', '08:30', '13:00']] },
-    { id: 'T-004', name: 'Tomás Ferreira', firstName: 'Tomás', lastName: 'Ferreira', preferredName: '', phone: '0407 512 884', subjects: ['Physics', 'Chemistry', 'Maths Methods'], active: true, cap: 8, windows: [['Tuesday', '15:30', '19:00'], ['Wednesday', '15:30', '18:00'], ['Thursday', '16:00', '18:30'], ['Saturday', '09:00', '12:30']] },
-    { id: 'T-006', name: 'Priyanka Shah', firstName: 'Priyanka', lastName: 'Shah', preferredName: '', phone: '0422 410 337', subjects: ['English', 'Mathematics'], active: true, cap: 10, windows: [['Tuesday', '15:00', '19:00'], ['Thursday', '15:00', '20:00'], ['Friday', '15:00', '19:00'], ['Saturday', '08:30', '12:00']] },
-    { id: 'T-008', name: 'Liam O’Connor', firstName: 'Liam', lastName: 'O’Connor', preferredName: '', phone: '0431 665 109', subjects: ['English', 'Modern History'], active: true, cap: 7, windows: [['Wednesday', '15:00', '20:00'], ['Friday', '15:30', '20:00']] },
-    { id: 'T-009', name: 'Grace Wu', firstName: 'Grace', lastName: 'Wu', preferredName: '', phone: '0403 929 140', subjects: ['Chemistry', 'Biology'], active: true, cap: 8, windows: [['Tuesday', '16:00', '20:00'], ['Thursday', '15:00', '19:30'], ['Saturday', '09:00', '13:00']] },
-    { id: 'T-010', name: 'Daniel Brooks', firstName: 'Daniel', lastName: 'Brooks', preferredName: '', phone: '0419 235 885', subjects: ['Mathematics', 'Physics'], active: false, cap: 8, windows: [] }
-  ],
-  sessions: [
-    { id: 1, date: iso(new Date()), time: '15:30', duration: 60, student: 'S-0287', tutor: 'T-004', subject: 'Physics', status: 'Booked' },
-    { id: 2, date: iso(new Date()), time: '16:45', duration: 60, student: 'S-0294', tutor: 'T-004', subject: 'Mathematics', status: 'Booked' },
-    { id: 3, date: iso(new Date()), time: '18:00', duration: 60, student: 'S-0302', tutor: 'T-004', subject: 'Chemistry', status: 'Booked' },
-    { id: 4, date: '2026-09-23', time: '15:30', duration: 60, student: 'S-0305', tutor: 'T-001', subject: 'Mathematics', status: 'Booked' },
-    { id: 5, date: '2026-09-23', time: '16:45', duration: 90, student: 'S-0308', tutor: 'T-001', subject: 'Maths Methods', status: 'Booked' },
-    { id: 6, date: '2026-09-24', time: '16:00', duration: 60, student: 'S-0287', tutor: 'T-004', subject: 'Physics', status: 'Booked' },
-    { id: 7, date: '2026-09-24', time: '17:15', duration: 60, student: 'S-0311', tutor: 'T-004', subject: 'Physics', status: 'Booked' },
-    { id: 8, date: '2026-09-25', time: '15:30', duration: 60, student: 'S-0305', tutor: 'T-006', subject: 'Mathematics', status: 'Booked' },
-    { id: 9, date: '2026-09-25', time: '17:00', duration: 60, student: 'S-0294', tutor: 'T-008', subject: 'English', status: 'Cancelled' },
-    { id: 10, date: '2026-09-26', time: '09:00', duration: 60, student: 'S-0294', tutor: 'T-004', subject: 'Mathematics', status: 'Booked' },
-    { id: 11, date: '2026-09-26', time: '10:15', duration: 90, student: 'S-0302', tutor: 'T-001', subject: 'Chemistry', status: 'Booked' },
-    { id: 12, date: '2026-08-11', time: '15:30', duration: 60, student: 'S-0287', tutor: 'T-004', subject: 'Physics', status: 'Attended' },
-    { id: 13, date: '2026-08-11', time: '16:45', duration: 60, student: 'S-0294', tutor: 'T-004', subject: 'Mathematics', status: 'Missed' },
-    { id: 14, date: '2026-08-13', time: '17:15', duration: 60, student: 'S-0311', tutor: 'T-004', subject: 'Physics', status: 'Cancelled' }
-  ]
-};
-
-const ALL_SUBJECTS = [
-  'Mathematics',
-  'Maths Methods',
-  'Specialist Mathematics',
-  'General Mathematics',
-  'Physics',
-  'Chemistry',
-  'Biology',
-  'English',
-  'English Literature',
-  'Modern History',
-  'Ancient History',
-  'Legal Studies',
-  'Business Studies',
-  'Economics',
-  'Psychology',
-  'Science (Junior)'
-];
+import { getStudents, getStudent, createStudent, updateStudent, deactivateStudent, studentToUI, studentPayload, studentValidationErrors, emptyStudentForm, studentFormErrors } from './services/studentsService.js';
+import LoadingScreen from './LoadingScreen.jsx';
+import StudentFields from './StudentFields.jsx';
+import DateRangePicker from './DateRangePicker.jsx';
+import SubjectMultiSelect from './SubjectMultiSelect.jsx';
 
 const TUTOR_DAY_NAMES = {
   1: 'Monday',
@@ -114,24 +64,8 @@ function endTime(t, d) {
 
 // Validation function enforcing business rule
 export default function App() {
-  // Master persistent state initialized from localStorage
-  const [data, setData] = useState(() => {
-    try {
-      const saved = localStorage.getItem('redgum-centre-v2');
-      return saved ? JSON.parse(saved) : SEED_DATA;
-    } catch {
-      return SEED_DATA;
-    }
-  });
-
-  // Sync to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('redgum-centre-v2', JSON.stringify(data));
-    } catch (e) {
-      console.error('Failed to save state to localStorage', e);
-    }
-  }, [data]);
+  // Server-owned records are never replaced by browser demo data.
+  const [data, setData] = useState({ students: [], sessions: [] });
 
   // Navigation and active view
   const [currentPage, setCurrentPage] = useState('schedule');
@@ -214,11 +148,62 @@ export default function App() {
   // Sessions View States
   const [sessionFilter, setSessionFilter] = useState('');
   const [sessionSearch, setSessionSearch] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [appliedDateRange, setAppliedDateRange] = useState({ from: '', to: '' });
+  const [listState, setListState] = useState({ loading: true, error: '', key: '' });
+  const listKey = appliedDateRange.from + ':' + appliedDateRange.to + ':' + scheduleRefresh;
+  const listLoading = listState.loading || listState.key !== listKey;
+  const [actionError, setActionError] = useState('');
+  const [sessionActionPending, setSessionActionPending] = useState(false);
+  const sessionActionRef = useRef(false);
+
+  useEffect(() => {
+    if (currentPage !== 'sessions') return;
+    const controller = new AbortController();
+    // eslint-disable-next-line react/set-state-in-effect -- Reset the loading state for this external request.
+    setListState({ loading: true, error: '', key: listKey });
+    getSessions({ startDate: appliedDateRange.from, endDate: appliedDateRange.to, signal: controller.signal })
+      .then(items => {
+        if (controller.signal.aborted) return;
+        setData(previous => ({ ...previous, sessions: items }));
+        setListState({ loading: false, error: '', key: listKey });
+      }).catch(error => {
+        if (!controller.signal.aborted) setListState({ loading: false, error: error.message, key: listKey });
+      });
+    return () => controller.abort();
+  }, [currentPage, listKey, appliedDateRange.from, appliedDateRange.to]);
+
 
   // Students View States
   const [studentSearch, setStudentSearch] = useState('');
   const [studentState, setStudentState] = useState('active'); // 'active' | 'all' | 'inactive'
-  const [studentSelected, setStudentSelected] = useState(() => data.students[0]?.id || null);
+  const [studentSelected, setStudentSelected] = useState(null);
+  const [studentDirectory, setStudentDirectory] = useState({ loading: true, error: '' });
+  const [studentRefresh, setStudentRefresh] = useState(0);
+  const [studentSaving, setStudentSaving] = useState(false);
+  const studentSavingRef = useRef(false);
+  const [studentDetails, setStudentDetails] = useState({ loading: false, error: '' });
+  const [studentDetailsRetry, setStudentDetailsRetry] = useState(0);
+  const [historyState, setHistoryState] = useState({ id: null, items: [], loading: false, error: '' });
+
+  useEffect(() => {
+    if (currentPage !== 'students') return;
+    const controller = new AbortController();
+    // eslint-disable-next-line react/set-state-in-effect -- Reset the loading state for this external request.
+    setStudentDirectory({ loading: true, error: '' });
+    getStudents({ signal: controller.signal }).then(items => {
+      if (controller.signal.aborted) return;
+      setData(previous => ({ ...previous, students: items.map(studentToUI) }));
+      setStudentSelected(previous => items.some(item => item.studentId === previous) ? previous : items[0]?.studentId ?? null);
+      setStudentDirectory({ loading: false, error: '' });
+    }).catch(error => {
+      if (!controller.signal.aborted) setStudentDirectory({ loading: false, error: error.message });
+    });
+    return () => controller.abort();
+  }, [currentPage, studentRefresh]);
+
 
   // Tutors View States
   const [tutorSearch, setTutorSearch] = useState('');
@@ -229,12 +214,14 @@ export default function App() {
   const [tutorRefresh, setTutorRefresh] = useState(0);
   const [tutorSaving, setTutorSaving] = useState(false);
   const tutorSavingRef = useRef(false);
+  const activeTutors = useMemo(() => tutorDirectory.items.filter(t => t.active), [tutorDirectory.items]);
 
   useEffect(() => {
-    if (currentPage !== 'tutors' && currentPage !== 'availability') return;
+    if (!['tutors', 'availability', 'students'].includes(currentPage)) return;
     const controller = new AbortController();
 
     const loadTutorArea = async () => {
+      setTutorDirectory(previous => ({ ...previous, loading: true, error: '' }));
       try {
         const tutors = await getTutorDirectory({ signal: controller.signal });
         if (controller.signal.aborted) return;
@@ -256,7 +243,6 @@ export default function App() {
             slot.tutorAvailabilityId
           ])
         }));
-        setTutorDirectory({ items: normalizedTutors, loading: false, error: '' });
 
         let students = [];
         try {
@@ -265,6 +251,7 @@ export default function App() {
           if (controller.signal.aborted || error.name === 'AbortError') return;
         }
 
+        if (controller.signal.aborted) return;
         const subjectsById = new Map();
         for (const subject of tutors.flatMap(tutorItem => tutorItem.subjects ?? [])) {
           subjectsById.set(subject.subjectId, subject);
@@ -276,6 +263,8 @@ export default function App() {
           a.subjectName.localeCompare(b.subjectName) || (a.subjectClass ?? '').localeCompare(b.subjectClass ?? '')
         ));
 
+        setTutorDirectory({ items: normalizedTutors, loading: false, error: '' });
+        if (currentPage !== 'tutors') return;
         const monday = iso(startOfWeek(new Date()));
         const scheduleResults = await Promise.allSettled(tutors.map(tutorItem =>
           getTutorSchedule(tutorItem.tutorId, monday, { signal: controller.signal })
@@ -419,16 +408,7 @@ export default function App() {
     return () => controller.abort();
   }, [modalOpen, modalMode, sessionForm.tutor, bookingRetry]);
 
-  const [studentForm, setStudentForm] = useState({
-    name: '',
-    year: 10,
-    school: '',
-    guardian: '',
-    phone: '',
-    email: '',
-    subjects: '',
-    active: true
-  });
+  const [studentForm, setStudentForm] = useState(emptyStudentForm);
 
   const [tutorForm, setTutorForm] = useState({
     firstName: '',
@@ -436,7 +416,7 @@ export default function App() {
     preferredName: '',
     name: '',
     phone: '',
-    subjects: [],
+    subjectIds: [],
     cap: 8,
     active: true
   });
@@ -455,87 +435,31 @@ export default function App() {
       return next;
     });
   };
-  const [isSubjectDropdownOpen, setIsSubjectDropdownOpen] = useState(false);
-  const [subjectSearchQuery, setSubjectSearchQuery] = useState('');
-  const [customSubjectInput, setCustomSubjectInput] = useState('');
-  const subjectDropdownRef = useRef(null);
+  const profileSubjectCatalog = new Map(tutorSubjectCatalog.map(subject => [subject.subjectId, subject]));
+  for (const subject of studentForm.profile?.subjects ?? []) profileSubjectCatalog.set(subject.subjectId, subject);
+  const subjectCatalogOptions = [...profileSubjectCatalog.values()].map(subject => ({
+    value: subject.subjectId,
+    label: subject.subjectName + (subject.subjectClass ? ' (' + subject.subjectClass + ')' : ''),
+  }));
 
-  // Close subject dropdown when clicking outside
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (subjectDropdownRef.current && !subjectDropdownRef.current.contains(event.target)) {
-        setIsSubjectDropdownOpen(false);
-      }
-    };
-
-    if (isSubjectDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('touchstart', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('touchstart', handleClickOutside);
-    };
-  }, [isSubjectDropdownOpen]);
-
-  // Aggregate all unique subjects from catalog, tutors, students, and sessions
-  const allAvailableSubjects = useMemo(() => {
-    const set = new Set(ALL_SUBJECTS);
-    tutorSubjectCatalog.forEach(subject => subject.subjectName && set.add(subject.subjectName.trim()));
-    (data.tutors || []).forEach(t => (t.subjects || []).forEach(s => s && set.add(s.trim())));
-    (data.students || []).forEach(st => (st.subjects || []).forEach(s => s && set.add(s.trim())));
-    (data.sessions || []).forEach(se => se.subject && set.add(se.subject.trim()));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [tutorSubjectCatalog, data.tutors, data.students, data.sessions]);
-
-  // Filtered subjects based on search query inside dropdown
-  const displayedSubjects = useMemo(() => {
-    if (!subjectSearchQuery.trim()) return allAvailableSubjects;
-    const q = subjectSearchQuery.toLowerCase();
-    return allAvailableSubjects.filter(s => s.toLowerCase().includes(q));
-  }, [allAvailableSubjects, subjectSearchQuery]);
-
-  // Toggle selection of a subject in tutorForm
-  const toggleSubject = (subjectName) => {
-    setTutorForm(prev => {
-      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
-      if (current.includes(subjectName)) {
-        return { ...prev, subjects: current.filter(s => s !== subjectName) };
-      } else {
-        return { ...prev, subjects: [...current, subjectName] };
-      }
+    if (!modalOpen || modalMode !== 'student' || !editId) return;
+    const controller = new AbortController();
+    // eslint-disable-next-line react/set-state-in-effect -- Reset the loading state for this external request.
+    setStudentDetails({ loading: true, error: '' });
+    getStudent(editId, { signal: controller.signal }).then(profile => {
+      if (controller.signal.aborted) return;
+      setStudentForm(studentToUI(profile));
+      setStudentDetails({ loading: false, error: '' });
+    }).catch(error => {
+      if (!controller.signal.aborted) setStudentDetails({ loading: false, error: error.message });
     });
-  };
+    return () => controller.abort();
+  }, [modalOpen, modalMode, editId, studentDetailsRetry]);
 
-  const selectAllFiltered = () => {
-    setTutorForm(prev => {
-      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
-      const combined = Array.from(new Set([...current, ...displayedSubjects]));
-      return { ...prev, subjects: combined };
-    });
-  };
-
-  const clearAllFiltered = () => {
-    setTutorForm(prev => {
-      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
-      const filtered = current.filter(s => !displayedSubjects.includes(s));
-      return { ...prev, subjects: filtered };
-    });
-  };
-
-  const handleAddCustomSubject = () => {
-    const trimmed = customSubjectInput.trim();
-    if (!trimmed) return;
-    setTutorForm(prev => {
-      const current = Array.isArray(prev.subjects) ? prev.subjects : [];
-      if (!current.includes(trimmed)) {
-        return { ...prev, subjects: [...current, trimmed] };
-      }
-      return prev;
-    });
-    setCustomSubjectInput('');
-  };
-
+  const [availabilitySaving, setAvailabilitySaving] = useState(false);
+  const availabilitySavingRef = useRef(false);
+  const [availabilityError, setAvailabilityError] = useState('');
   const [availabilityForm, setAvailabilityForm] = useState({
     tutor: '',
     day: 'Tuesday',
@@ -544,9 +468,8 @@ export default function App() {
   });
 
   // Entity lookup helpers
-  const student = (id) => data.students.find(x => x.id === id);
-  const tutor = (id) => tutorDirectory.items.find(x => String(x.id) === String(id))
-    || data.tutors.find(x => String(x.id) === String(id));
+  const student = (id) => data.students.find(x => String(x.id) === String(id));
+  const tutor = (id) => tutorDirectory.items.find(x => String(x.id) === String(id));
 
   // Week dates calculator (Tuesday through Saturday: +1 to +5 days from weekStart Monday)
   const weekDates = useMemo(() => {
@@ -598,36 +521,9 @@ export default function App() {
       setSessionDetails({ loading: Boolean(id), error: '' });
       setSessionForm(getInitialSessionForm());
     } else if (mode === 'student') {
-      if (id) {
-        const item = student(id);
-        if (item) {
-          setStudentForm({
-            name: item.name,
-            year: item.year,
-            school: item.school,
-            guardian: item.guardian,
-            phone: item.phone,
-            email: item.email,
-            subjects: item.subjects.join(', '),
-            active: item.active
-          });
-        }
-      } else {
-        setStudentForm({
-          name: '',
-          year: 10,
-          school: '',
-          guardian: '',
-          phone: '',
-          email: '',
-          subjects: '',
-          active: true
-        });
-      }
+      setStudentDetails({ loading: Boolean(id), error: '' });
+      setStudentForm(id ? { ...student(id) } : emptyStudentForm());
     } else if (mode === 'tutor') {
-      setIsSubjectDropdownOpen(false);
-      setSubjectSearchQuery('');
-      setCustomSubjectInput('');
       if (id) {
         const item = tutor(id);
         if (item) {
@@ -645,7 +541,7 @@ export default function App() {
             preferredName,
             name: item.name || '',
             phone: item.phone || '',
-            subjects: Array.isArray(item.subjects) ? [...item.subjects] : (item.subjects ? [item.subjects] : []),
+            subjectIds: [...item.subjectIds],
             cap: item.cap || 8,
             active: item.active !== false
           });
@@ -657,13 +553,13 @@ export default function App() {
           preferredName: '',
           name: '',
           phone: '',
-          subjects: [],
+          subjectIds: [],
           cap: 8,
           active: true
         });
       }
     } else if (mode === 'availability') {
-      const firstActiveTutor = data.tutors.find(t => t.active)?.id || '';
+      const firstActiveTutor = tutorDirectory.items.find(t => t.active)?.id || '';
       setAvailabilityForm({
         tutor: firstActiveTutor,
         day: 'Tuesday',
@@ -676,7 +572,7 @@ export default function App() {
   };
 
   const closeModal = () => {
-    if (sessionSavingRef.current || tutorSavingRef.current) return;
+    if (sessionSavingRef.current || tutorSavingRef.current || studentSavingRef.current || availabilitySavingRef.current) return;
     setModalOpen(false);
     setEditId(null);
     setFormError('');
@@ -687,13 +583,10 @@ export default function App() {
       preferredName: '',
       name: '',
       phone: '',
-      subjects: [],
+      subjectIds: [],
       cap: 8,
       active: true
     });
-    setIsSubjectDropdownOpen(false);
-    setSubjectSearchQuery('');
-    setCustomSubjectInput('');
   };
 
   // Submit modal form
@@ -735,44 +628,44 @@ export default function App() {
       }
       return;
     } else if (modalMode === 'student') {
-      const subjectsList = studentForm.subjects.split(',').map(s => s.trim()).filter(Boolean);
-      if (editId) {
-        setData(prev => ({
-          ...prev,
-          students: prev.students.map(s => s.id === editId ? {
-            ...s,
-            name: studentForm.name.trim(),
-            year: Number(studentForm.year),
-            school: studentForm.school.trim(),
-            guardian: studentForm.guardian.trim(),
-            phone: studentForm.phone.trim(),
-            email: studentForm.email.trim(),
-            subjects: subjectsList,
-            active: Boolean(studentForm.active)
-          } : s)
-        }));
-        triggerToast('Changes saved.');
-      } else {
-        const maxNum = Math.max(0, ...data.students.map(s => Number(s.id.split('-')[1]) || 0));
-        const newId = 'S-' + String(maxNum + 1).padStart(4, '0');
-        const newStudent = {
-          id: newId,
-          name: studentForm.name.trim(),
-          year: Number(studentForm.year),
-          school: studentForm.school.trim(),
-          guardian: studentForm.guardian.trim(),
-          phone: studentForm.phone.trim(),
-          email: studentForm.email.trim(),
-          subjects: subjectsList,
-          active: true
-        };
-        setData(prev => ({
-          ...prev,
-          students: [...prev.students, newStudent]
-        }));
-        setStudentSelected(newId);
-        triggerToast('Record added to the centre system.');
+      if (studentSavingRef.current || studentDetails.loading || studentDetails.error) return;
+      const inputErrors = studentFormErrors(studentForm);
+      if (inputErrors.length) {
+        setFormError(inputErrors.join(' '));
+        return;
       }
+      if (studentForm.profile?.isActive === false && studentForm.active) {
+        setFormError('This student cannot be reactivated through the current API.');
+        return;
+      }
+      studentSavingRef.current = true;
+      setStudentSaving(true);
+      let savedProfile;
+      try {
+        const payload = studentPayload(studentForm);
+        savedProfile = editId ? await updateStudent(editId, payload) : await createStudent(payload);
+        if (editId && savedProfile.isActive && !studentForm.active) {
+          savedProfile = await deactivateStudent(editId);
+        }
+        setStudentSelected(savedProfile.studentId);
+        setStudentRefresh(value => value + 1);
+        setTutorRefresh(value => value + 1);
+        setScheduleRefresh(value => value + 1);
+        setModalOpen(false);
+        setEditId(null);
+        triggerToast(editId ? 'Student updated.' : 'Student added.');
+      } catch (error) {
+        if (savedProfile) {
+          setStudentForm(previous => ({ ...studentToUI(savedProfile), active: previous.active }));
+          setStudentRefresh(value => value + 1);
+        }
+        const messages = studentValidationErrors(error);
+        setFormError((savedProfile ? 'Profile saved, but deactivation failed. ' : '') + (messages.length ? messages.join(' ') : error.message));
+      } finally {
+        studentSavingRef.current = false;
+        setStudentSaving(false);
+      }
+      return;
     } else if (modalMode === 'tutor') {
       if (tutorSavingRef.current) return;
       const fName = (tutorForm.firstName || '').trim();
@@ -788,11 +681,7 @@ export default function App() {
         return;
       }
 
-      const subjectsList = Array.isArray(tutorForm.subjects)
-        ? tutorForm.subjects.map(s => s.trim()).filter(Boolean)
-        : tutorForm.subjects.split(',').map(s => s.trim()).filter(Boolean);
-
-      if (subjectsList.length === 0) {
+      if (!tutorForm.subjectIds?.length) {
         setFormError('Please select at least one teaching subject for the tutor.');
         return;
       }
@@ -811,26 +700,11 @@ export default function App() {
         return;
       }
 
-      const subjectIdByName = new Map();
-      tutorSubjectCatalog.forEach(subject => {
-        if (!subjectIdByName.has(subject.subjectName)) {
-          subjectIdByName.set(subject.subjectName, subject.subjectId);
-        }
-      });
-      originalTutor?.subjects.forEach((subjectName, index) => {
-        subjectIdByName.set(subjectName, originalTutor.subjectIds[index]);
-      });
-      const missingSubjects = subjectsList.filter(subjectName => !subjectIdByName.has(subjectName));
-      if (missingSubjects.length > 0) {
-        setFormError(`These subjects are not available in the backend: ${missingSubjects.join(', ')}.`);
-        return;
-      }
-
       const payload = {
         tutorName: finalName,
         phone: tutorForm.phone.trim(),
         maxSessionsPw: Number(tutorForm.cap) || 8,
-        subjectIds: [...new Set(subjectsList.map(subjectName => subjectIdByName.get(subjectName)))],
+        subjectIds: [...new Set(tutorForm.subjectIds)],
         unavailabilityNotes: originalTutor?.unavailabilityNotes || '',
         notes: originalTutor?.notes || ''
       };
@@ -859,48 +733,76 @@ export default function App() {
       closeModal();
       return;
     } else if (modalMode === 'availability') {
-      if (mins(availabilityForm.end) <= mins(availabilityForm.start)) {
-        setFormError('The finish time must be later than the start time.');
+      if (availabilitySavingRef.current) return;
+      const dayOfWeek = Number(Object.keys(TUTOR_DAY_NAMES).find(key => TUTOR_DAY_NAMES[key] === availabilityForm.day));
+      if (!activeTutors.some(tutor => String(tutor.id) === String(availabilityForm.tutor)) || !dayOfWeek || !availabilityForm.start || !availabilityForm.end) {
+        setFormError('Choose a tutor, day, start time and end time.');
         return;
       }
-      setData(prev => ({
-        ...prev,
-        tutors: prev.tutors.map(t => t.id === availabilityForm.tutor ? {
-          ...t,
-          windows: [...(t.windows || []), [availabilityForm.day, availabilityForm.start, availabilityForm.end]]
-        } : t)
-      }));
-      triggerToast('Record added to the centre system.');
+      if (mins(availabilityForm.end) <= mins(availabilityForm.start)) {
+        setFormError('End time must be after start time.');
+        return;
+      }
+      availabilitySavingRef.current = true;
+      setAvailabilitySaving(true);
+      setAvailabilityError('');
+      try {
+        await addTutorAvailability(availabilityForm.tutor, { dayOfWeek, startTime: availabilityForm.start, endTime: availabilityForm.end });
+        setTutorDirectory(previous => ({ ...previous, loading: true, error: '' }));
+        setTutorRefresh(value => value + 1);
+        setModalOpen(false);
+        triggerToast('Availability added.');
+      } catch (error) {
+        const messages = tutorValidationErrors(error);
+        setFormError(messages.length ? messages.join(' ') : error.message);
+      } finally {
+        availabilitySavingRef.current = false;
+        setAvailabilitySaving(false);
+      }
     }
-
-    closeModal();
   };
 
-  // Remove availability window
-  const handleRemoveWindow = (tutorId, day, index) => {
-    setData(prev => ({
-      ...prev,
-      tutors: prev.tutors.map(t => {
-        if (t.id !== tutorId) return t;
-        const matchingWindows = (t.windows || []).map((w, i) => ({ w, i })).filter(item => item.w[0] === day);
-        if (!matchingWindows[index]) return t;
-        const realIndex = matchingWindows[index].i;
-        const updated = [...t.windows];
-        updated.splice(realIndex, 1);
-        return { ...t, windows: updated };
-      })
-    }));
-    triggerToast('Availability window removed.');
+  const handleRemoveAvailability = async (tutorId, availabilityId) => {
+    if (availabilitySavingRef.current || !availabilityId) return;
+    availabilitySavingRef.current = true;
+    setAvailabilitySaving(true);
+    setAvailabilityError('');
+    try {
+      await removeTutorAvailability(tutorId, availabilityId);
+      setTutorDirectory(previous => ({ ...previous, loading: true, error: '' }));
+      setTutorRefresh(value => value + 1);
+      triggerToast('Availability removed.');
+    } catch (error) {
+      const messages = tutorValidationErrors(error);
+      setAvailabilityError(messages.length ? messages.join(' ') : error.message);
+    } finally {
+      availabilitySavingRef.current = false;
+      setAvailabilitySaving(false);
+    }
   };
 
-  // Direct status action on session
-  const handleSetStatus = (id, newStatus) => {
-    setData(prev => ({
-      ...prev,
-      sessions: prev.sessions.map(s => s.id === id ? { ...s, status: newStatus } : s)
-    }));
-    triggerToast(`Session marked ${newStatus.toLowerCase()}.`);
+  const runSessionAction = async (action, message) => {
+    if (sessionActionRef.current) return;
+    sessionActionRef.current = true;
+    setSessionActionPending(true);
+    setActionError('');
+    try {
+      await action();
+      setScheduleRefresh(value => value + 1);
+      setTutorRefresh(value => value + 1);
+      triggerToast(message);
+    } catch (error) {
+      const messages = sessionValidationErrors(error);
+      setActionError(messages.length ? messages.join(' ') : error.message);
+    } finally {
+      sessionActionRef.current = false;
+      setSessionActionPending(false);
+    }
   };
+
+  const handleSetStatus = (id, status) => runSessionAction(
+    () => updateSessionStatus(id, status), 'Session marked ' + status.toLowerCase() + '.');
+
 
   // Navigate to Sessions tab with Tutor filtered
   const showTutorSessions = (tutorId) => {
@@ -918,39 +820,39 @@ export default function App() {
   // Session stats for Sessions page
   const sessionStats = useMemo(() => {
     const counts = { Booked: 0, Attended: 0, Cancelled: 0, Missed: 0 };
-    data.sessions.forEach(s => {
+    (listLoading || listState.error ? [] : data.sessions).forEach(s => {
       if (counts[s.status] !== undefined) counts[s.status]++;
     });
     return counts;
-  }, [data.sessions]);
+  }, [data.sessions, listLoading, listState.error]);
 
   // Filtered sessions list for Sessions page
   const filteredSessions = useMemo(() => {
     const q = sessionSearch.toLowerCase();
-    return data.sessions
+    return (listLoading || listState.error ? [] : data.sessions)
       .filter(s => {
         const matchesStatus = !sessionFilter || s.status === sessionFilter;
-        const studentName = student(s.student)?.name?.toLowerCase() || '';
-        const tutorName = tutor(s.tutor)?.name?.toLowerCase() || '';
+        const studentName = s.studentName?.toLowerCase() || '';
+        const tutorName = s.tutorName?.toLowerCase() || '';
         const subjectName = s.subject?.toLowerCase() || '';
         const matchesQuery = !q || studentName.includes(q) || tutorName.includes(q) || subjectName.includes(q);
         return matchesStatus && matchesQuery;
       })
       .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
-  }, [data.sessions, sessionFilter, sessionSearch]);
+  }, [data.sessions, sessionFilter, sessionSearch, listLoading, listState.error]);
 
   // Filtered students for Students page
   const filteredStudents = useMemo(() => {
     const q = studentSearch.toLowerCase();
-    return data.students.filter(s => {
+    return (studentDirectory.loading || studentDirectory.error ? [] : data.students).filter(s => {
       const matchesState = studentState === 'all' || (studentState === 'active' ? s.active : !s.active);
       const matchesQuery = !q ||
         s.name.toLowerCase().includes(q) ||
-        s.guardian.toLowerCase().includes(q) ||
+        s.guardians.some(guardian => [guardian.guardianName, guardian.guardianPhone, guardian.guardianEmail].some(value => value.toLowerCase().includes(q))) ||
         s.subjects.join(' ').toLowerCase().includes(q);
       return matchesState && matchesQuery;
     });
-  }, [data.students, studentState, studentSearch]);
+  }, [data.students, studentState, studentSearch, studentDirectory]);
 
   // Filtered tutors for Tutors page
   const filteredTutors = useMemo(() => {
@@ -964,23 +866,31 @@ export default function App() {
     });
   }, [tutorDirectory.items, tutorState, tutorSearch]);
 
-  const activeTutors = useMemo(() => tutorDirectory.items.filter(t => t.active), [tutorDirectory.items]);
-  const activeStudents = useMemo(() => data.students.filter(s => s.active), [data.students]);
   const editingTutor = modalMode === 'tutor' && editId
     ? tutorDirectory.items.find(item => String(item.id) === String(editId))
     : null;
 
   // Selected student details & history
-  const selectedStudentObj = student(studentSelected) || filteredStudents[0] || null;
-  const studentHistory = useMemo(() => {
-    if (!selectedStudentObj) return [];
-    return data.sessions
-      .filter(s => s.student === selectedStudentObj.id)
-      .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
-  }, [data.sessions, selectedStudentObj]);
+  const selectedStudentObj = filteredStudents.find(item => item.id === studentSelected) || filteredStudents[0] || null;
+  const historyId = selectedStudentObj?.id ?? null;
+  const historyLoading = historyState.loading || historyState.id !== historyId;
+  const studentHistory = historyLoading || historyState.error ? [] : historyState.items;
+  useEffect(() => {
+    if (currentPage !== 'students' || historyId === null) return;
+    const controller = new AbortController();
+    // eslint-disable-next-line react/set-state-in-effect -- Reset the loading state for this external request.
+    setHistoryState({ id: historyId, items: [], loading: true, error: '' });
+    getStudentHistory(historyId, { signal: controller.signal }).then(items => {
+      if (!controller.signal.aborted) setHistoryState({ id: historyId, items, loading: false, error: '' });
+    }).catch(error => {
+      if (!controller.signal.aborted) setHistoryState({ id: historyId, items: [], loading: false, error: error.message });
+    });
+    return () => controller.abort();
+  }, [currentPage, historyId, scheduleRefresh]);
 
   return (
     <div className="app">
+      <LoadingScreen />
       <main className="shell">
         {/* Top Header */}
         <header className="topbar">
@@ -995,6 +905,8 @@ export default function App() {
           </div>
         </header>
 
+        {actionError && <div className="notice error" role="alert">{actionError}<button className="btn small" onClick={() => setActionError('')}>Dismiss</button></div>}
+        {sessionActionPending && <p role="status">Saving session...</p>}
         <div className="layout">
           {/* Left Sidebar */}
           <aside className="sidebar">
@@ -1049,7 +961,7 @@ export default function App() {
                   <div>
                     <div className="eyebrow">Week at a glance</div>
                     <h1>Centre schedule</h1>
-                    <p>Live schedule, Tuesday to Saturday. Create a new booking to add a session.</p>
+                    <p>Live schedule, Tuesday to Saturday. Open a session to edit its booking details.</p>
                   </div>
                   <div className="head-actions">
                     <button className="btn ghost" onClick={() => window.print()}>Print week</button>
@@ -1185,12 +1097,10 @@ export default function App() {
                         </header>
 
                         <div
-                          className="dropzone"
+                          className="schedule-sessions"
                         >
                           {items.length > 0 ? (
                             items.map(x => {
-                              const s = { name: x.studentName };
-                              const t = { name: x.tutorName };
                               return (
                                 <div
                                   key={x.id}
@@ -1200,8 +1110,8 @@ export default function App() {
                                     <span className="time">{x.time} · {x.duration} min</span>
                                     <span className={`badge ${x.status.toLowerCase()}`}>{x.status}</span>
                                   </div>
-                                  <div className="student-name">{s?.name || 'Unknown student'}</div>
-                                  <div className="session-meta">{t?.name || 'Unknown tutor'}</div>
+                                  <div className="student-name">{x.studentName}</div>
+                                  <div className="session-meta">{x.tutorName}</div>
                                   <div className="subject-line">
                                     <span>{x.subject}</span>
                                     <button
@@ -1276,6 +1186,12 @@ export default function App() {
                     ))}
                   </div>
 
+                  <DateRangePicker fromDate={fromDate} setFromDate={setFromDate}
+                    toDate={toDate} setToDate={setToDate} datePickerOpen={datePickerOpen}
+                    setDatePickerOpen={setDatePickerOpen} appliedDateRange={appliedDateRange}
+                    setAppliedDateRange={setAppliedDateRange} sessions={filteredSessions}
+                    fmtDate={fmtDate} localDate={localDate} />
+
                   <div className="search">
                     <input
                       type="search"
@@ -1286,6 +1202,8 @@ export default function App() {
                   </div>
                 </div>
 
+                {listLoading && <p role="status">Loading sessions...</p>}
+                {!listLoading && listState.error && <div className="notice error" role="alert">{listState.error}<button className="btn small" onClick={() => setScheduleRefresh(value => value + 1)}>Retry</button></div>}
                 <div className="session-list-card">
                   <div className="table-wrap">
                     <table className="data-table">
@@ -1303,16 +1221,14 @@ export default function App() {
                       <tbody>
                         {filteredSessions.length > 0 ? (
                           filteredSessions.map(x => {
-                            const s = student(x.student);
-                            const t = tutor(x.tutor);
                             return (
                               <tr key={x.id}>
                                 <td>
                                   <b>{fmtDate(x.date, { weekday: 'short', day: 'numeric', month: 'short' })}</b><br />
                                   <span className="session-meta">{x.time}–{endTime(x.time, x.duration)}</span>
                                 </td>
-                                <td>{s?.name || 'Unknown student'}</td>
-                                <td>{t?.name || 'Unknown tutor'}</td>
+                                <td>{x.studentName}</td>
+                                <td>{x.tutorName}</td>
                                 <td>{x.subject}</td>
                                 <td>{x.duration} min</td>
                                 <td>
@@ -1330,12 +1246,15 @@ export default function App() {
                                       <>
                                         <button
                                           className="btn small"
+                                          disabled={sessionActionPending || listLoading}
                                           onClick={() => handleSetStatus(x.id, 'Attended')}
                                         >
                                           Attended
                                         </button>
+                                        <button className="btn small" disabled={sessionActionPending || listLoading} onClick={() => handleSetStatus(x.id, 'Missed')}>Missed</button>
                                         <button
                                           className="btn small danger"
+                                          disabled={sessionActionPending || listLoading}
                                           onClick={() => handleSetStatus(x.id, 'Cancelled')}
                                         >
                                           Cancel
@@ -1350,7 +1269,7 @@ export default function App() {
                         ) : (
                           <tr>
                             <td colSpan="7">
-                              <div className="empty">No sessions match this view.</div>
+                              <div className="empty">{listLoading ? 'Loading...' : listState.error ? 'Sessions unavailable.' : 'No sessions match this view.'}</div>
                             </td>
                           </tr>
                         )}
@@ -1364,6 +1283,8 @@ export default function App() {
             {/* 3. Students View */}
             {currentPage === 'students' && (
               <section className="page active" id="page-students">
+                {studentDirectory.loading && <p role="status">Loading students...</p>}
+                {studentDirectory.error && <div className="notice error" role="alert">{studentDirectory.error}<button className="btn small" onClick={() => setStudentRefresh(value => value + 1)}>Retry</button></div>}
                 <div className="page-head">
                   <div>
                     <div className="eyebrow">{data.students.filter(s => s.active).length} active students</div>
@@ -1400,9 +1321,8 @@ export default function App() {
                         <thead>
                           <tr>
                             <th>Student</th>
-                            <th>Year</th>
                             <th>Subjects</th>
-                            <th>Family contact</th>
+                            <th>Primary guardian</th>
                             <th>Status</th>
                           </tr>
                         </thead>
@@ -1419,15 +1339,14 @@ export default function App() {
                                     <span className="initial">{initials(x.name)}</span>
                                     <span>
                                       <b>{x.name}</b>
-                                      <small>{x.id} · {x.school || 'Unspecified'}</small>
+                                      <small>Student #{x.id}</small>
                                     </span>
                                   </div>
                                 </td>
-                                <td>Year {x.year}</td>
                                 <td>
                                   <div className="chips">
-                                    {x.subjects.map(sub => (
-                                      <span key={sub} className="chip">{sub}</span>
+                                    {x.subjects.map((sub, index) => (
+                                      <span key={x.subjectIds[index]} className="chip">{sub}</span>
                                     ))}
                                   </div>
                                 </td>
@@ -1444,7 +1363,7 @@ export default function App() {
                             ))
                           ) : (
                             <tr>
-                              <td colSpan="5">
+                              <td colSpan="4">
                                 <div className="empty">No students match this view.</div>
                               </td>
                             </tr>
@@ -1461,26 +1380,20 @@ export default function App() {
                         <div className="detail-hero">
                           <span className="initial">{initials(selectedStudentObj.name)}</span>
                           <h2>{selectedStudentObj.name}</h2>
-                          <p>{selectedStudentObj.id} · Year {selectedStudentObj.year}</p>
+                          <p>Student #{selectedStudentObj.id}</p>
                         </div>
                         <div className="facts">
-                          <div className="fact">
-                            <label>Family contact</label>
-                            <div>
-                              {selectedStudentObj.guardian}<br />
-                              {selectedStudentObj.phone}<br />
-                              {selectedStudentObj.email}
-                            </div>
-                          </div>
-                          <div className="fact">
-                            <label>School</label>
-                            <div>{selectedStudentObj.school || 'Not specified'}</div>
-                          </div>
+                          {['mediaConsent', 'firstAidNeeded', 'shareProgress'].map((field, index) => <div className="fact" key={field}>
+                            <label>{['Media consent', 'First aid needed', 'Share progress'][index]}</label>
+                            <div>{selectedStudentObj[field] == null ? 'Not specified' : selectedStudentObj[field] ? 'Yes' : 'No'}</div>
+                          </div>)}
+                          <div className="fact"><label>Availability notes</label><div className="student-notes">{selectedStudentObj.availabilityNotes || 'None'}</div></div>
+                          <div className="fact"><label>Notes</label><div className="student-notes">{selectedStudentObj.notes || 'None'}</div></div>
                           <div className="fact">
                             <label>Subjects</label>
                             <div className="chips">
-                              {selectedStudentObj.subjects.map(s => (
-                                <span key={s} className="chip">{s}</span>
+                              {selectedStudentObj.subjects.map((s, index) => (
+                                <span key={selectedStudentObj.subjectIds[index]} className="chip">{s}</span>
                               ))}
                             </div>
                           </div>
@@ -1493,6 +1406,22 @@ export default function App() {
                             </div>
                           </div>
                         </div>
+                        <section className="guardian-history" aria-labelledby="student-guardians-title">
+                          <h3 className="subhead" id="student-guardians-title">Guardians</h3>
+                          <ul className="guardian-details-list">
+                            {selectedStudentObj.guardians.map((guardian, index) => (
+                              <li className="history-row" key={guardian.guardianId ?? index}>
+                                <div>
+                                  <b>{guardian.guardianName}</b>
+                                  <span>{guardian.relationship}</span>
+                                  <span>{guardian.guardianPhone}</span>
+                                  {guardian.guardianEmail && <span>{guardian.guardianEmail}</span>}
+                                </div>
+                                {index === 0 && <span className="badge active">Primary</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </section>
                         <div className="history">
                           <div className="inline-actions" style={{ justifyContent: 'space-between', marginBottom: 11 }}>
                             <div className="subhead" style={{ margin: 0 }}>Session history</div>
@@ -1503,6 +1432,8 @@ export default function App() {
                               Edit record
                             </button>
                           </div>
+                          {historyLoading && <p role="status">Loading history...</p>}
+                          {historyState.error && <div role="alert">{historyState.error}<button className="btn small" onClick={() => setScheduleRefresh(value => value + 1)}>Retry</button></div>}
                           {studentHistory.length > 0 ? (
                             studentHistory.map(s => (
                               <div key={s.id} className="history-row">
@@ -1511,13 +1442,13 @@ export default function App() {
                                 </div>
                                 <div>
                                   <b>{s.subject}</b>
-                                  <span>{tutor(s.tutor)?.name || 'Unknown tutor'} · {s.duration} min</span>
+                                  <span>{s.tutorName} · {s.duration} min</span>
                                 </div>
                                 <span className={`badge ${s.status.toLowerCase()}`}>{s.status}</span>
                               </div>
                             ))
                           ) : (
-                            <div className="empty">No sessions recorded yet.</div>
+                            <div className="empty">{historyLoading ? 'Loading...' : historyState.error ? 'History unavailable.' : 'No sessions recorded yet.'}</div>
                           )}
                         </div>
                       </>
@@ -1628,15 +1559,16 @@ export default function App() {
                     <h1>Tutor availability</h1>
                     <p>Bookings must start and finish inside one of these windows.</p>
                   </div>
-                  <button className="btn primary" disabled title="Availability changes are not supported by the backend API.">＋ Add availability</button>
+                  <button className="btn primary" disabled={availabilitySaving || tutorDirectory.loading || Boolean(tutorDirectory.error) || !activeTutors.length} onClick={() => openModal('availability')}>＋ Add availability</button>
                 </div>
 
                 <div className="notice">
                   <b>Rule:</b>
                   <span>The system checks the tutor, day, start time, and full session length before saving or moving any booking. Invalid bookings are refused with a reason.</span>
-                  <span>Availability is read-only because the backend does not provide add or remove endpoints.</span>
                 </div>
 
+                {availabilityError && <div className="notice error" role="alert">{availabilityError}</div>}
+                {!tutorDirectory.loading && !tutorDirectory.error && !activeTutors.length && <p className="empty">No active tutors available.</p>}
                 {tutorDirectory.loading ? (
                   <div className="empty" role="status">Loading tutor availability...</div>
                 ) : tutorDirectory.error ? (
@@ -1662,14 +1594,14 @@ export default function App() {
                         return (
                           <div key={day}>
                             {dayWindows.length > 0 ? (
-                              dayWindows.map((w, index) => (
-                                <div key={index} className="window">
+                              dayWindows.map(w => (
+                                <div key={w[3]} className="window">
                                   <span>{w[1]}–{w[2]}</span>
                                   <button
-                                    aria-label="Remove availability"
-                                    disabled
-                                    title="Availability changes are not supported by the backend API."
-                                    onClick={() => handleRemoveWindow(t.id, day, index)}
+                                    aria-label={"Remove " + t.name + " availability on " + day + " " + w[1] + " to " + w[2]}
+                                    disabled={availabilitySaving || !w[3]}
+                                    onClick={() => handleRemoveAvailability(t.id, w[3])}
+
                                   >
                                     ×
                                   </button>
@@ -1772,10 +1704,13 @@ export default function App() {
           </div>
 
           <form onSubmit={handleModalSubmit}>
+            {modalMode === 'student' && studentDetails.loading && <p role="status">Loading student profile...</p>}
+            {modalMode === 'student' && studentDetails.error && <div role="alert">{studentDetails.error}<button type="button" className="btn" onClick={() => setStudentDetailsRetry(value => value + 1)}>Retry</button></div>}
+            {['student', 'tutor'].includes(modalMode) && tutorDirectory.loading && <p role="status">Loading subjects...</p>}
+            {['student', 'tutor'].includes(modalMode) && tutorDirectory.error && <div role="alert">{tutorDirectory.error}<button type="button" className="btn" onClick={() => setTutorRefresh(value => value + 1)}>Retry subjects</button></div>}
             {modalMode === 'session' && editId && sessionDetails.loading && <p role="status">Loading session details...</p>}
             {modalMode === 'session' && editId && sessionDetails.error && <div role="alert">{sessionDetails.error}<button type="button" className="btn" onClick={() => { setSessionDetails({ loading: true, error: '' }); setDetailsRetry(value => value + 1); }}>Retry</button></div>}
-            {modalMode === 'session' && editId && !sessionDetails.loading && !sessionDetails.error && <p>Session #{editId}. {sessionEditMode ? 'Update the details and save your changes.' : 'Select Edit to change this session.'}</p>}
-            <fieldset disabled={sessionSaving || tutorSaving || (modalMode === 'session' && Boolean(editId) && (!sessionEditMode || sessionDetails.loading || Boolean(sessionDetails.error)))} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+            <fieldset disabled={sessionSaving || tutorSaving || studentSaving || availabilitySaving || (modalMode === 'student' && (studentDetails.loading || Boolean(studentDetails.error))) || (modalMode === 'session' && Boolean(editId) && (!sessionEditMode || sessionDetails.loading || Boolean(sessionDetails.error)))} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="form-grid">
               {/* Session Modal Fields */}
               {modalMode === 'session' && (
@@ -1791,7 +1726,7 @@ export default function App() {
                     >
                       <option value="">{bookingStudents.ready ? 'Select a student' : 'Loading students...'}</option>
                       {editId && sessionForm.student && !bookingStudents.items.some(student => String(student.studentId) === sessionForm.student) && <option value={sessionForm.student}>Student #{sessionForm.student}</option>}
-                      {bookingStudents.items.map(student => <option key={student.studentId} value={student.studentId}>{student.studentName}</option>)}
+                      {bookingStudents.items.filter(student => student.isActive || (editId && String(student.studentId) === sessionForm.student)).map(student => <option key={student.studentId} value={student.studentId}>{student.studentName}</option>)}
                     </select>
                   </div>
 
@@ -1883,102 +1818,8 @@ export default function App() {
                 </>
               )}
 
-              {/* Student Modal Fields */}
-              {modalMode === 'student' && (
-                <>
-                  <div className="field">
-                    <label htmlFor="f_name">Student name *</label>
-                    <input
-                      id="f_name"
-                      type="text"
-                      value={studentForm.name}
-                      onChange={(e) => setStudentForm({ ...studentForm, name: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label htmlFor="f_year">Year level *</label>
-                    <input
-                      id="f_year"
-                      type="number"
-                      min="5"
-                      max="12"
-                      value={studentForm.year}
-                      onChange={(e) => setStudentForm({ ...studentForm, year: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="field full">
-                    <label htmlFor="f_school">School</label>
-                    <input
-                      id="f_school"
-                      type="text"
-                      value={studentForm.school}
-                      onChange={(e) => setStudentForm({ ...studentForm, school: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label htmlFor="f_guardian">Family contact *</label>
-                    <input
-                      id="f_guardian"
-                      type="text"
-                      value={studentForm.guardian}
-                      onChange={(e) => setStudentForm({ ...studentForm, guardian: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="field">
-                    <label htmlFor="f_phone">Phone *</label>
-                    <input
-                      id="f_phone"
-                      type="tel"
-                      value={studentForm.phone}
-                      onChange={(e) => setStudentForm({ ...studentForm, phone: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="field full">
-                    <label htmlFor="f_email">Email</label>
-                    <input
-                      id="f_email"
-                      type="email"
-                      value={studentForm.email}
-                      onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="field full">
-                    <label htmlFor="f_subjects">Subjects *</label>
-                    <input
-                      id="f_subjects"
-                      type="text"
-                      placeholder="e.g. Mathematics, Chemistry (comma separated)"
-                      value={studentForm.subjects}
-                      onChange={(e) => setStudentForm({ ...studentForm, subjects: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  {editId && (
-                    <div className="field full">
-                      <label htmlFor="f_active">Status</label>
-                      <select
-                        id="f_active"
-                        value={studentForm.active ? 'true' : 'false'}
-                        onChange={(e) => setStudentForm({ ...studentForm, active: e.target.value === 'true' })}
-                      >
-                        <option value="true">Active</option>
-                        <option value="false">Inactive</option>
-                      </select>
-                    </div>
-                  )}
-                </>
-              )}
+              {modalMode === 'student' && <StudentFields key={'student:' + modalOpen + ':' + editId}
+                form={studentForm} setForm={setStudentForm} subjectOptions={subjectCatalogOptions} editing={Boolean(editId)} />}
 
               {/* Tutor Modal Fields */}
               {modalMode === 'tutor' && (
@@ -2096,153 +1937,8 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="field full">
-                    <label id="label_tutor_subjects">Subjects *</label>
-                    <div className="subject-multiselect-container" ref={subjectDropdownRef}>
-                      <button
-                        type="button"
-                        id="f_tutor_subjects_btn"
-                        className={`subject-dropdown-btn ${isSubjectDropdownOpen ? 'open' : ''}`}
-                        onClick={() => setIsSubjectDropdownOpen(prev => !prev)}
-                        aria-expanded={isSubjectDropdownOpen}
-                        aria-haspopup="listbox"
-                        aria-labelledby="label_tutor_subjects"
-                      >
-                        <span className="dropdown-btn-label">
-                          <span className="dropdown-btn-icon">📚</span>
-                          {(!tutorForm.subjects || tutorForm.subjects.length === 0) ? (
-                            <span className="placeholder">Select teaching subjects...</span>
-                          ) : (
-                            <span className="selected-summary">
-                              <b>{tutorForm.subjects.length}</b> {tutorForm.subjects.length === 1 ? 'subject' : 'subjects'} selected
-                            </span>
-                          )}
-                        </span>
-                        <span className="dropdown-chevron">{isSubjectDropdownOpen ? '▲' : '▼'}</span>
-                      </button>
-
-                      {/* Dropdown Menu */}
-                      {isSubjectDropdownOpen && (
-                        <div className="subject-dropdown-menu" role="listbox" aria-multiselectable="true">
-                          <div className="subject-dropdown-header">
-                            <input
-                              type="text"
-                              className="subject-search-input"
-                              placeholder="Search subjects..."
-                              value={subjectSearchQuery}
-                              onChange={(e) => setSubjectSearchQuery(e.target.value)}
-                              autoFocus
-                            />
-                            <div className="subject-quick-actions">
-                              <span className="subject-counter">
-                                {displayedSubjects.length} subjects
-                              </span>
-                              <div className="subject-action-links">
-                                <button
-                                  type="button"
-                                  className="quick-action-btn"
-                                  onClick={selectAllFiltered}
-                                >
-                                  Select all
-                                </button>
-                                <span className="action-sep">·</span>
-                                <button
-                                  type="button"
-                                  className="quick-action-btn"
-                                  onClick={clearAllFiltered}
-                                >
-                                  Clear
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="subject-options-list">
-                            {displayedSubjects.map(sub => {
-                              const isSelected = Array.isArray(tutorForm.subjects) && tutorForm.subjects.includes(sub);
-                              return (
-                                <div
-                                  key={sub}
-                                  className={`subject-option-item ${isSelected ? 'selected' : ''}`}
-                                  onClick={() => toggleSubject(sub)}
-                                  role="option"
-                                  aria-selected={isSelected}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={() => {}}
-                                    tabIndex={-1}
-                                  />
-                                  <span className="subject-option-name">{sub}</span>
-                                  {isSelected && <span className="subject-check-icon">✓</span>}
-                                </div>
-                              );
-                            })}
-                            {displayedSubjects.length === 0 && (
-                              <div className="no-subjects-found">
-                                No subjects match "{subjectSearchQuery}"
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="subject-dropdown-footer">
-                            <input
-                              type="text"
-                              className="custom-subject-input"
-                              placeholder="Add other subject..."
-                              value={customSubjectInput}
-                              onChange={(e) => setCustomSubjectInput(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleAddCustomSubject();
-                                }
-                              }}
-                            />
-                            <button
-                              type="button"
-                              className="btn small soft"
-                              onClick={handleAddCustomSubject}
-                              disabled={!customSubjectInput.trim()}
-                            >
-                              ＋ Add
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Selected Tags / Chips Display */}
-                      {Array.isArray(tutorForm.subjects) && tutorForm.subjects.length > 0 && (
-                        <div className="selected-subject-chips">
-                          {tutorForm.subjects.map(sub => (
-                            <span key={sub} className="subject-chip">
-                              <span>{sub}</span>
-                              <button
-                                type="button"
-                                className="chip-remove"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleSubject(sub);
-                                }}
-                                title={`Remove ${sub}`}
-                                aria-label={`Remove ${sub}`}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                          <button
-                            type="button"
-                            className="clear-all-chips-btn"
-                            onClick={() => setTutorForm(prev => ({ ...prev, subjects: [] }))}
-                          >
-                            Clear all
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <SubjectMultiSelect key={"tutor:" + modalOpen + ":" + editId} idPrefix="tutor_subjects" selectedSubjects={tutorForm.subjectIds}
+                    availableSubjects={subjectCatalogOptions} onChange={subjectIds => setTutorForm(previous => ({ ...previous, subjectIds }))} />
 
                   <div className="field">
                     <label htmlFor="f_cap">Maximum sessions per week</label>
@@ -2283,6 +1979,7 @@ export default function App() {
                       onChange={(e) => setAvailabilityForm({ ...availabilityForm, tutor: e.target.value })}
                       required
                     >
+                      <option value="">Select a tutor</option>
                       {activeTutors.map(t => (
                         <option key={t.id} value={t.id}>{t.name}</option>
                       ))}
@@ -2337,14 +2034,14 @@ export default function App() {
             )}
 
             <div className="modal-actions">
-              <button type="button" className="btn" disabled={sessionSaving || tutorSaving} onClick={closeModal}>Cancel</button>
+              <button type="button" className="btn" disabled={sessionSaving || tutorSaving || studentSaving || availabilitySaving} onClick={closeModal}>Cancel</button>
               {modalMode === 'session' && editId && !sessionEditMode ? (
                 <button type="button" className="btn primary" disabled={sessionDetails.loading || Boolean(sessionDetails.error) || !bookingStudents.ready || !bookingTutors.ready || subjectsLoading || Boolean(bookingStudents.error || bookingTutors.error || bookingSubjects.error)} onClick={() => { setFormError(''); setSessionErrors([]); setSessionEditMode(true); }}>Edit</button>
               ) : (
                 <>
                   {modalMode === 'session' && editId && <button type="button" className="btn" disabled={sessionSaving} onClick={() => { setSessionForm({ ...savedSessionForm.current }); setSessionEditMode(false); setFormError(''); setSessionErrors([]); }}>Cancel editing</button>}
-                  <button type="submit" className="btn primary" disabled={sessionSaving || tutorSaving || (modalMode === 'session' && (!sessionForm.subjectId || subjectsLoading || !bookingStudents.ready || !bookingTutors.ready || Boolean(bookingStudents.error || bookingTutors.error || bookingSubjects.error)))}>
-                    {sessionSaving || tutorSaving ? 'Saving...' : editId ? 'Save changes' : 'Add ' + modalMode}
+                  <button type="submit" className="btn primary" disabled={(modalMode === 'availability' && (tutorDirectory.loading || Boolean(tutorDirectory.error) || !activeTutors.length)) || sessionSaving || tutorSaving || studentSaving || availabilitySaving || (['student', 'tutor'].includes(modalMode) && (tutorDirectory.loading || Boolean(tutorDirectory.error))) || (modalMode === 'student' && (studentDetails.loading || Boolean(studentDetails.error))) || (modalMode === 'session' && (!sessionForm.subjectId || subjectsLoading || !bookingStudents.ready || !bookingTutors.ready || Boolean(bookingStudents.error || bookingTutors.error || bookingSubjects.error)))}>
+                    {sessionSaving || tutorSaving || studentSaving || availabilitySaving ? 'Saving...' : editId ? 'Save changes' : 'Add ' + modalMode}
                   </button>
                 </>
               )}

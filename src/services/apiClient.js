@@ -1,4 +1,5 @@
-﻿import { API_BASE_URL } from './config.js';
+import { beginRequest } from './requestActivity.js';
+import { API_BASE_URL } from './config.js';
 
 export class ApiError extends Error {
   constructor(message, { status = 0, data = null, cause } = {}) {
@@ -10,7 +11,7 @@ export class ApiError extends Error {
 }
 
 /** Paths are relative to the API root. Query arrays use repeated keys. */
-async function request(path, { method = 'GET', query, body, headers, signal } = {}) {
+async function performRequest(path, { method = 'GET', query, body, headers, signal } = {}) {
   const url = new URL(`${API_BASE_URL}/${path.replace(/^\/+/, '')}`, globalThis.location?.origin);
   for (const [key, value] of Object.entries(query ?? {})) {
     for (const item of Array.isArray(value) ? value : [value]) {
@@ -57,6 +58,15 @@ async function request(path, { method = 'GET', query, body, headers, signal } = 
     );
   }
   return data;
+}
+
+async function request(path, options) {
+  const finish = beginRequest();
+  try {
+    return await performRequest(path, options);
+  } finally {
+    finish();
+  }
 }
 
 export const apiClient = {

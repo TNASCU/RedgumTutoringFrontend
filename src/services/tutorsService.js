@@ -36,6 +36,10 @@ export function tutorValidationErrors(error) {
     phone: 'Phone',
     maxSessionsPw: 'Maximum sessions per week',
     subjectIds: 'Subjects',
+    dayOfWeek: 'Day',
+    startTime: 'Start time',
+    endTime: 'End time',
+    availability: 'Availability',
   };
   return Object.entries(errors).flatMap(([key, messages]) => {
     if (!Array.isArray(messages)) return [];
@@ -44,3 +48,14 @@ export function tutorValidationErrors(error) {
       .map(message => `${labels[key] || key}: ${message}`);
   });
 }
+
+export function addTutorAvailability(tutorId, { dayOfWeek, startTime, endTime }) {
+  return apiClient.post('Tutors/' + encodeURIComponent(tutorId) + '/availability', {
+    dayOfWeek: Number(dayOfWeek),
+    startTime: startTime.length === 5 ? startTime + ':00' : startTime,
+    endTime: endTime.length === 5 ? endTime + ':00' : endTime,
+  });
+}
+
+export const removeTutorAvailability = (tutorId, availabilityId) =>
+  apiClient.delete('Tutors/' + encodeURIComponent(tutorId) + '/availability/' + encodeURIComponent(availabilityId));
