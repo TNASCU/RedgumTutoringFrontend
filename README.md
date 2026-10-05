@@ -10,7 +10,7 @@
 
 ## 🌟 Overview
 
-This is the React frontend implementation for the **Redgum Tutoring Scheduling System**, faithfully translated from the prototype HTML/CSS mockup. It provides a complete, modern, reactive interface with local persistence, business rule enforcement (availability validation), and full interactive state management.
+This is the React frontend implementation for the **Redgum Tutoring Scheduling System**. It provides a complete, modern, reactive interface with local persistence, business rule enforcement (availability validation), and full interactive state management.
 
 ### Key Features Implemented:
 1. **Weekly & Daily Schedule (Whiteboard View)**
@@ -31,13 +31,13 @@ This is the React frontend implementation for the **Redgum Tutoring Scheduling S
    - Split panel layout: Student table and comprehensive details view.
    - Displays student year level, active status, family contact, and subjects.
    - Dedicated session history tracking past and upcoming sessions for the selected student.
-   - Add/edit student modal with automatic ID assignment (`S-0xxx`).
+   - Add/edit student modal with automatic ID assignment.
 
 4. **Tutor Directory & Capacity**
    - Grid cards displaying tutor name, phone, teaching subjects, and active status.
    - Visual weekly capacity progress bar and load indicator (e.g. `3 / 8` sessions).
    - "Upcoming sessions" quick shortcut filtering directly to that tutor's bookings.
-   - Add/edit tutor modal with automatic ID assignment (`T-0xx`).
+   - Add/edit tutor modal with automatic ID assignment.
 
 5. **Tutor Availability Management**
    - Centre-wide availability grid across all operating days (Tuesday–Saturday).
