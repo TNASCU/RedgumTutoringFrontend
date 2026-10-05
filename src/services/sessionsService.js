@@ -1,4 +1,4 @@
-﻿import { apiClient } from './apiClient.js';
+import { apiClient } from './apiClient.js';
 import { getStudents } from './studentsService.js';
 import { getTutors } from './tutorsService.js';
 
@@ -71,3 +71,38 @@ export function updateSession(id, form) {
 
 export const copyWeekForward = weekStart =>
   apiClient.post('Sessions/copy-week-forward', { weekStart });
+
+export function sessionToUI(session) {
+  return {
+    id: session.sessionId, date: session.sessionDate, time: session.startTime.slice(0, 5),
+    duration: session.duration, student: session.studentId, tutor: session.tutorId,
+    subjectId: session.subjectId,
+    studentName: session.student?.studentName ?? 'Student #' + session.studentId,
+    tutorName: session.tutor?.tutorName ?? 'Tutor #' + session.tutorId,
+    subject: session.subject?.subjectName ?? 'Subject #' + session.subjectId,
+    status: session.status ? session.status[0].toUpperCase() + session.status.slice(1).toLowerCase() : 'Unknown',
+    notes: session.notes ?? '', lessonNotes: session.lessonNotes ?? '',
+  };
+}
+
+export async function getSessions({ startDate, endDate, tutorId, signal } = {}) {
+  const sessions = await apiClient.get('Sessions', { query: { startDate: startDate || undefined, endDate: endDate || undefined, tutorId: tutorId || undefined }, signal });
+  return sessions.map(sessionToUI);
+}
+
+export async function getStudentHistory(studentId, { signal } = {}) {
+  try {
+    const sessions = await apiClient.get('Sessions/student/' + encodeURIComponent(studentId) + '/history', { signal });
+    return sessions.map(sessionToUI);
+  } catch (error) {
+    // StudentEpic adds the history route. Older preprod deployments expose only
+    // the all-sessions route; never fall back for network/validation failures.
+    if (error.status !== 404) throw error;
+    const sessions = await getSessions({ signal });
+    return sessions.filter(session => session.student === Number(studentId))
+      .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+  }
+}
+
+export const updateSessionStatus = (id, status) =>
+  apiClient.patch('Sessions/' + encodeURIComponent(id) + '/status', { status: status.toLowerCase() });
